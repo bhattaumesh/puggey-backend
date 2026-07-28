@@ -1,0 +1,852 @@
+// Pugey Phase 1 schema: multi-tenant foundation.
+// Role naming note: enum values below are internal and unchanged since Phase 1.
+// DISPLAY labels (see frontend lib/roles.ts) differ from these enum names by
+// explicit product decision: TenantRole.SUPER_ADMIN (full tenant control) displays
+// as "Admin"; TenantRole.ADMIN (read-only oversight) displays as "Viewer"; the
+// platform role "PUGEY_STAFF" displays as "Super Admin" -- following the
+// WordPress-Multisite convention where "Super Admin" is reserved for the
+// platform operator, not a per-tenant role.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TenantStatus {
+  trial
+  active
+  past_due
+  suspended
+  cancelled
+  purged
+}
+
+enum TenantRole {
+  SUPER_ADMIN // full control, tenant-scoped (formerly "Company Admin")
+  ADMIN // read-only org-wide oversight (formerly "CEO")
+  SUPERVISOR // direct + indirect reports
+  EMPLOYEE
+}
+
+enum MembershipStatus {
+  invited
+  active
+  disabled
+}
+
+enum PugeyStaffRole {
+  SUPER_ADMIN // platform-level, manages tenants/plans/billing
+  SUPPORT
+}
+
+enum LeaveRequestStatus {
+  pending
+  approved
+  rejected
+  cancelled
+}
+
+enum LeaveDecision {
+  approved
+  rejected
+}
+
+enum DocumentType {
+  CITIZENSHIP
+  NID
+  DRIVING_LICENCE
+}
+
+enum AdvanceRecoveryMode {
+  FULL
+  INSTALMENT
+}
+
+model Tenant {
+  id                   String       @id @default(uuid())
+  slug                 String       @unique
+  name                 String
+  status               TenantStatus @default(trial)
+  plan                 String       @default("trial")
+  locale               String       @default("en") // "en" | "ne"
+  // Which calendar reads as primary across the app/website, and which one
+  // payroll periods and attendance dates are entered/labeled in. The other
+  // calendar still always shows too (see lib/bsDate.ts) -- this only picks
+  // which one leads. Nepal has no day-boundary ambiguity between the two
+  // (BS and AD name the same instant), so this is a display/entry
+  // preference, not a different clock.
+  calendarPreference   String       @default("AD") // "AD" | "BS"
+  timezone             String       @default("Asia/Kathmandu")
+  // REQUIRES_VERIFICATION: fiscal year (Shrawan-Asar) start expressed as an AD month
+  // number is an approximation. The exact BS<->AD day boundary shifts year to year and
+  // must go through the BS conversion library at the point of use, not this fixed field.
+  fiscalYearStartMonth Int          @default(7)
+  logoUrl              String?
+  accentColorHex       String?      @default("#3EA832")
+  companyCode          String?      @unique // fallback identifier for shared-domain logins
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  deletedAt            DateTime?
+
+  memberships          TenantMembership[]
+  auditLogs            AuditLog[]
+  departments          Department[]
+  notifications        Notification[]
+  attendanceEvents     AttendanceEvent[]
+  leaveTypes           LeaveType[]
+  leaveBalances        LeaveBalance[]
+  leaveRequests        LeaveRequest[]
+  approvalDelegations  ApprovalDelegation[]
+  leaveApprovalActions LeaveApprovalAction[]
+  apiKeys              ApiKey[]
+  payrollSettings      PayrollSettings?
+  payslips             Payslip[]
+  documents            Document[]
+  advanceCategories    AdvanceCategory[]
+  advances             Advance[]
+  advanceRecoveries    AdvanceRecovery[]
+  advanceRequests      AdvanceRequest[]
+  tasks                Task[]
+  racks                Rack[]
+  rackCleaningLogs     RackCleaningLog[]
+  rackAssignments      RackAssignment[]
+  vendors              Vendor[]
+  productReceivedLogs  ProductReceivedLog[]
+
+  @@map("tenants")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  // Single display-name field rather than firstName/lastName -- avoids imposing
+  // Western name-order assumptions (spec section 12).
+  fullName     String?
+  phone        String?
+  mfaEnabled   Boolean   @default(false)
+  mfaSecret    String?
+  disabled     Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastLoginAt  DateTime?
+
+  memberships         TenantMembership[]
+  pugeyStaff          PugeyStaffMember?
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  notifications       Notification[]
+
+  @@map("users")
+}
+
+// Single-use, time-limited reset tokens. Looked up by SHA-256 hash (same reasoning
+// as RefreshToken -- the raw value is high-entropy random bytes, not a human
+// password, so a fast deterministic hash is fine and lets us query by equality).
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// A user's role is scoped per-tenant. The same person can be an Employee in one
+// tenant and a Super Admin in another (consultants, shared finance staff).
+//
+// This is also the HR "employee record" -- a separate Employee table would just
+// duplicate the tenant+user relationship this already has. photoUrl is
+// computed at read time (EmployeesService) from photoData/photoMimeType when
+// an actual photo has been uploaded (a data: URI, same bytea-in-Postgres
+// approach as Document, deliberately not S3 -- reusing sharp's EXIF-stripping
+// already used there); it stays a plain string for a tenant that prefers to
+// paste an externally-hosted URL instead.
+model TenantMembership {
+  id           String            @id @default(uuid())
+  tenantId     String
+  userId       String
+  role         TenantRole
+  status       MembershipStatus  @default(active)
+  supervisorMembershipId String? // self-relation target set below via relation name
+  departmentId String?
+  designation  String?
+  employeeCode String?
+  photoUrl     String?
+  photoData      Bytes?
+  photoMimeType  String?
+  // REQUIRES_VERIFICATION: monthly base salary, set per employee by the
+  // tenant's own admin. Never defaulted or guessed by the app -- payroll
+  // cannot run for someone until their employer sets this deliberately.
+  baseSalary   Decimal?          @db.Decimal(12, 2)
+
+  // Bio-data. Photo stays on the existing photoUrl field above -- this
+  // command only adds the fields the profile spec named.
+  dateOfBirth      DateTime?
+  fatherName       String?
+  motherName       String?
+  grandfatherName  String?
+
+  // Background.
+  education        String?
+  pastExperience   String?
+
+  // Contact. mobileNumber is intentionally separate from User.phone: phone is
+  // the account-level contact used across every tenant a user belongs to,
+  // mobileNumber is this specific employment record's own HR-held number.
+  currentAddress          String?
+  permanentAddress        String?
+  mobileNumber            String?
+  emergencyContactNumber  String?
+
+  // Identity numbers. Strings, not integers -- Nepali document numbers carry
+  // formatting and leading zeros and their formats vary, so no format
+  // validation is applied beyond trimming whitespace. Sensitive: redacted by
+  // the same rule as baseSalary (see EmployeesService.redact).
+  citizenshipNumber     String?
+  panNumber             String?
+  nidNumber             String?
+  drivingLicenceNumber  String?
+
+  joinedAt     DateTime          @default(now())
+  leftAt       DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
+  user             User               @relation(fields: [userId], references: [id])
+  department       Department?        @relation(fields: [departmentId], references: [id])
+  supervisor       TenantMembership?  @relation("ReportsTo", fields: [supervisorMembershipId], references: [id])
+  reports          TenantMembership[] @relation("ReportsTo")
+  attendanceEvents AttendanceEvent[]
+  leaveBalances    LeaveBalance[]
+  leaveRequests    LeaveRequest[]
+  payslips         Payslip[]
+  documents        Document[]
+  advances         Advance[]
+  advanceRequests  AdvanceRequest[]
+  tasksAssigned    Task[]             @relation("TaskAssignee")
+  tasksCreated     Task[]             @relation("TaskAssigner")
+  rackCleaningLogs RackCleaningLog[]
+  rackAssignmentsReceived RackAssignment[] @relation("RackAssignee")
+  rackAssignmentsGiven    RackAssignment[] @relation("RackAssigner")
+  productReceivedLogs ProductReceivedLog[]
+
+  @@unique([tenantId, userId])
+  @@unique([tenantId, employeeCode])
+  @@index([tenantId])
+  @@map("tenant_memberships")
+}
+
+enum TaskStatus {
+  pending
+  in_progress
+  completed
+}
+
+// Assigned from an employee's profile page (My Team), not a standalone
+// board -- deliberately simple, no project/sprint concept. Creating a task
+// is admin-only (canCreateEditDeleteAnyRecord, matching Documents/Advances
+// management on the same profile screen); the assignee can update their own
+// task's status without needing the broader profile-edit permission.
+model Task {
+  id                     String     @id @default(uuid())
+  tenantId               String
+  membershipId           String
+  title                  String
+  description            String?
+  status                 TaskStatus @default(pending)
+  dueDate                DateTime?
+  assignedByMembershipId String
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  membership TenantMembership @relation("TaskAssignee", fields: [membershipId], references: [id])
+  assignedBy TenantMembership @relation("TaskAssigner", fields: [assignedByMembershipId], references: [id])
+
+  @@index([tenantId])
+  @@index([membershipId])
+  @@map("tasks")
+}
+
+// A physical storage rack in the store that needs periodic cleaning and
+// expiry-date checking. Deliberately simple -- no shelf/aisle hierarchy,
+// just a named location any employee can search for and any admin can
+// manage. "Pending" (not cleaned in 30 days) is computed from
+// RackCleaningLog at query time, not stored, so it's always accurate.
+model Rack {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  location  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant       Tenant            @relation(fields: [tenantId], references: [id])
+  cleaningLogs RackCleaningLog[]
+  assignments  RackAssignment[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("racks")
+}
+
+// One row per cleaning/expiry-check event. Append-only history -- marking a
+// rack cleaned again never edits a past log, it just adds a new one, so
+// "when and who last cleaned this" is always derivable and the full history
+// (admin) vs last-3 (employee) views are the same query with a different
+// take/limit.
+model RackCleaningLog {
+  id           String   @id @default(uuid())
+  tenantId     String
+  rackId       String
+  membershipId String
+  cleanedAt    DateTime @default(now())
+  remarks      String?
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  rack       Rack             @relation(fields: [rackId], references: [id])
+  membership TenantMembership @relation(fields: [membershipId], references: [id])
+  assignment RackAssignment?
+
+  @@index([tenantId])
+  @@index([rackId])
+  @@map("rack_cleaning_logs")
+}
+
+enum RackAssignmentStatus {
+  pending
+  completed
+  cancelled
+}
+
+// A supervisor or admin assigning a specific rack to a specific employee to
+// clean by a given date -- the work-queue layer on top of RackCleaningLog's
+// plain history. At most one 'pending' assignment per rack: creating a new
+// one cancels whichever was open (reassignment, not a queue), and completing
+// the underlying clean (RacksService.clean) closes out whatever assignment
+// was open for that rack regardless of who actually did the cleaning, since
+// the thing being tracked is "is it clean", not "did the assignee personally
+// do it" -- the log itself still records who cleaned it either way.
+model RackAssignment {
+  id                     String               @id @default(uuid())
+  tenantId               String
+  rackId                 String
+  membershipId           String
+  assignedByMembershipId String
+  status                 RackAssignmentStatus @default(pending)
+  dueDate                DateTime?
+  completedAt            DateTime?
+  cleaningLogId          String?              @unique
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+
+  tenant      Tenant           @relation(fields: [tenantId], references: [id])
+  rack        Rack             @relation(fields: [rackId], references: [id])
+  membership  TenantMembership @relation("RackAssignee", fields: [membershipId], references: [id])
+  assignedBy  TenantMembership @relation("RackAssigner", fields: [assignedByMembershipId], references: [id])
+  cleaningLog RackCleaningLog? @relation(fields: [cleaningLogId], references: [id])
+
+  @@index([tenantId])
+  @@index([rackId])
+  @@index([membershipId])
+  @@map("rack_assignments")
+}
+
+// A supplier the store receives goods from. Deliberately just a name --
+// no contact/address fields, since nothing in this command asked for
+// them -- any employee can pick one to log a receipt against, only an
+// admin can create one.
+model Vendor {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  createdAt DateTime @default(now())
+
+  tenant   Tenant               @relation(fields: [tenantId], references: [id])
+  receipts ProductReceivedLog[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("vendors")
+}
+
+// One row per product-received event. Append-only, same reasoning as
+// RackCleaningLog -- a vendor can supply many separate deliveries, so this
+// is a log/feed (admin's "Recent Product Received"), not a per-vendor
+// status like rack cleaning's pending/not-pending.
+model ProductReceivedLog {
+  id           String   @id @default(uuid())
+  tenantId     String
+  vendorId     String
+  membershipId String
+  receivedAt   DateTime @default(now())
+  remarks      String?
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  vendor     Vendor           @relation(fields: [vendorId], references: [id])
+  membership TenantMembership @relation(fields: [membershipId], references: [id])
+
+  @@index([tenantId])
+  @@index([vendorId])
+  @@map("product_received_logs")
+}
+
+// Phase 8 (Payroll). Every rate here is REQUIRES_VERIFICATION: the app never
+// ships a real Nepal income-tax bracket or Social Security Fund percentage as
+// a default, because those are legal figures that change and that we are not
+// qualified to assert. Both start at zero and stay there until the tenant's
+// own admin enters a rate they have verified with an accountant. One row per
+// tenant.
+model PayrollSettings {
+  id                     String   @id @default(uuid())
+  tenantId               String   @unique
+  incomeTaxPercent       Decimal  @default(0) @db.Decimal(5, 2)
+  providentFundPercent   Decimal  @default(0) @db.Decimal(5, 2)
+  updatedAt              DateTime @updatedAt
+  createdAt              DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("payroll_settings")
+}
+
+// One row per employee per calendar month. Amounts are computed and frozen
+// at generation time from that month's baseSalary and PayrollSettings --
+// later changes to either never retroactively alter an already-generated
+// payslip, the same "append, don't mutate" principle as AttendanceEvent.
+model Payslip {
+  id                   String   @id @default(uuid())
+  tenantId             String
+  membershipId         String
+  // 1-12. Whichever calendar the tenant preferred (Tenant.calendarPreference)
+  // at generation time -- gross pay is the flat baseSalary, never derived
+  // from an attendance date range, so year/month here is purely a period
+  // label, and labeling it in BS when the tenant runs payroll on the BS
+  // calendar is exactly as valid as English months. Do not assume AD when
+  // reading these back; check the tenant's current preference (or store a
+  // reference if a tenant's preference might change mid-history -- not done
+  // here, since switching preference mid-year is an edge case this command
+  // does not otherwise handle).
+  year                 Int
+  month                Int
+  grossPay             Decimal  @db.Decimal(12, 2)
+  incomeTax            Decimal  @db.Decimal(12, 2)
+  providentFund        Decimal  @db.Decimal(12, 2)
+  // Salary after tax and provident fund -- unchanged meaning since Phase 8.
+  netPay               Decimal  @db.Decimal(12, 2)
+  // Amount carried forward from a prior period that was owed to the
+  // employee but not yet paid out (e.g. a correction or a delayed
+  // reimbursement) -- the opposite direction from an advance. Added to
+  // netPay before advance recovery is computed, so advance recovery can
+  // draw against this too, never past it.
+  previousMonthReceivable Decimal @default(0) @db.Decimal(12, 2)
+  // Below: the advances integration. advanceRecovery is whatever
+  // AdvancesService.computeAdvanceDeductions returned for this member and
+  // period, capped so it can never exceed (netPay + previousMonthReceivable)
+  // (payroll always passes that sum as the availableNetPay floor).
+  // netPayable = netPay + previousMonthReceivable - advanceRecovery -- the
+  // actual take-home figure, and the one the Advances module's own net-pay
+  // display shows once a payslip exists for a period.
+  advanceRecovery      Decimal  @default(0) @db.Decimal(12, 2)
+  netPayable           Decimal  @db.Decimal(12, 2)
+  generatedByMembershipId String
+  createdAt            DateTime @default(now())
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  membership TenantMembership @relation(fields: [membershipId], references: [id])
+
+  @@unique([membershipId, year, month])
+  @@index([tenantId])
+  @@map("payslips")
+}
+
+model Department {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  createdAt DateTime @default(now())
+
+  tenant  Tenant             @relation(fields: [tenantId], references: [id])
+  members TenantMembership[]
+
+  @@unique([tenantId, name])
+  @@map("departments")
+}
+
+// Platform staff. Deliberately NOT a TenantMembership — Pugey staff must never appear
+// in any tenant's user list, per the spec's strict separation requirement.
+model PugeyStaffMember {
+  id        String         @id @default(uuid())
+  userId    String         @unique
+  role      PugeyStaffRole
+  createdAt DateTime       @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("pugey_staff_members")
+}
+
+// Minimal in-app notification -- no email/push delivery yet (spec section 14
+// lists those as later channels). Recipient-scoped, not tenant-broadcast, so a
+// query for "my notifications" is always `WHERE userId = me`, and RLS on top of
+// that still confines it to rows belonging to the caller's own tenant.
+model Notification {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String
+  type      String
+  message   String
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("notifications")
+}
+
+// Append-only punch log (spec section 8) -- attendance records for a given day
+// are derived by grouping these at query time, not stored separately. Never
+// mutated once written; a correction creates a NEW event with source
+// "admin_correction" and a reason, alongside an AuditLog entry, rather than
+// editing the original punch.
+model AttendanceEvent {
+  id           String   @id @default(uuid())
+  tenantId     String
+  membershipId String
+  type         String // "check_in" | "check_out"
+  occurredAt   DateTime @default(now())
+  source       String   @default("web") // web | admin_correction (geofence/qr/biometric later)
+  reason       String? // required for admin_correction
+  actorUserId  String? // who recorded it, if different from the membership's own user
+  createdAt    DateTime @default(now())
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  membership TenantMembership @relation(fields: [membershipId], references: [id])
+
+  @@index([tenantId])
+  @@index([membershipId, occurredAt])
+  @@map("attendance_events")
+}
+
+model LeaveType {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  name               String
+  defaultDaysPerYear Int
+  createdAt          DateTime @default(now())
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id])
+  balances LeaveBalance[]
+  requests LeaveRequest[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("leave_types")
+}
+
+// One row per membership+leaveType+year. Lazily created the first time it's
+// needed (on request submission or balance lookup) rather than seeded up front,
+// so adding a new LeaveType never requires a backfill migration.
+model LeaveBalance {
+  id           String   @id @default(uuid())
+  tenantId     String
+  membershipId String
+  leaveTypeId  String
+  year         Int
+  allocated    Int
+  used         Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  membership TenantMembership @relation(fields: [membershipId], references: [id])
+  leaveType  LeaveType        @relation(fields: [leaveTypeId], references: [id])
+
+  @@unique([membershipId, leaveTypeId, year])
+  @@index([tenantId])
+  @@map("leave_balances")
+}
+
+model LeaveRequest {
+  id           String             @id @default(uuid())
+  tenantId     String
+  membershipId String
+  leaveTypeId  String
+  startDate    DateTime
+  endDate      DateTime
+  days         Int
+  reason       String
+  status       LeaveRequestStatus @default(pending)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  tenant     Tenant                @relation(fields: [tenantId], references: [id])
+  membership TenantMembership      @relation(fields: [membershipId], references: [id])
+  leaveType  LeaveType             @relation(fields: [leaveTypeId], references: [id])
+  actions    LeaveApprovalAction[]
+
+  @@index([tenantId])
+  @@index([membershipId])
+  @@map("leave_requests")
+}
+
+// Lets a supervisor designate a stand-in who can approve leave in their place
+// specifically on the days they themselves are on approved leave -- resolved
+// automatically in LeaveService.resolveApprover, not a general permission grant.
+// The default approval chain (no delegation involved) is simply the requester's
+// own supervisorMembershipId, walked upward -- Pugey already models the org
+// hierarchy for this purpose, so leave approval reuses it rather than
+// duplicating a separate scope/department matching system.
+model ApprovalDelegation {
+  id                    String   @id @default(uuid())
+  tenantId              String
+  delegatorMembershipId String
+  delegateMembershipId  String
+  active                Boolean  @default(true)
+  createdByMembershipId String
+  createdAt             DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([delegatorMembershipId, delegateMembershipId])
+  @@index([tenantId])
+  @@map("approval_delegations")
+}
+
+// Audit trail of who decided a leave request and why -- one row per decision.
+// A request is finalized by its first decision (single-approver model), but the
+// row is kept even for the eventual finalizing decision so there's always a
+// record of who actually acted, not just the request's final status.
+model LeaveApprovalAction {
+  id                   String        @id @default(uuid())
+  tenantId             String
+  leaveRequestId       String
+  approverMembershipId String
+  decision             LeaveDecision
+  reason               String?
+  createdAt            DateTime      @default(now())
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  leaveRequest LeaveRequest @relation(fields: [leaveRequestId], references: [id])
+
+  @@index([leaveRequestId])
+  @@map("leave_approval_actions")
+}
+
+// Phase 9 (Extensions): tenant-scoped keys for the read-only external API
+// (see ExternalController). Same hashing pattern as RefreshToken/
+// PasswordResetToken -- the raw value is high-entropy random bytes, not a
+// human password, so a fast deterministic hash is fine and lets us query by
+// equality. The raw key is shown to the caller exactly once, at creation.
+model ApiKey {
+  id                    String    @id @default(uuid())
+  tenantId              String
+  name                  String
+  keyPrefix             String // first 12 chars of the raw key, shown in the UI to tell keys apart
+  keyHash               String    @unique
+  createdByMembershipId String
+  lastUsedAt            DateTime?
+  revokedAt             DateTime?
+  createdAt             DateTime  @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@map("api_keys")
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid())
+  userId     String
+  tenantId   String? // which tenant workspace this session is bound to
+  tokenHash  String    @unique
+  userAgent  String?
+  ipAddress  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// Platform-level and tenant-level events share one table; tenantId is null for
+// platform actions (tenant creation, Super Admin impersonation, etc).
+model AuditLog {
+  id         String   @id @default(uuid())
+  tenantId   String?
+  actorUserId String?
+  action     String
+  entityType String
+  entityId   String?
+  targetUserId String?
+  reason     String?
+  beforeJson String?
+  afterJson  String?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@map("audit_logs")
+}
+
+// Citizenship/NID/driving licence uploads. Stored as bytes directly in
+// Postgres rather than an external object store, since no such
+// infrastructure exists in this codebase yet -- this way tenant isolation is
+// inherited automatically from the same RLS policy every other tenant-scoped
+// table already has, instead of standing up a new external storage
+// dependency to build this command. "Replacing a document" inserts a new row
+// and soft-deletes the previous one (deletedAt), matching the codebase's
+// existing soft-delete convention (see Tenant.deletedAt) -- history is kept,
+// never hard-deleted. At most one row per (membershipId, type) has
+// deletedAt = null; enforced in the service layer, not a DB constraint.
+model Document {
+  id              String        @id @default(uuid())
+  tenantId        String
+  membershipId    String
+  type            DocumentType
+  fileName        String
+  mimeType        String
+  sizeBytes       Int
+  data            Bytes
+  uploadedByMembershipId String
+  createdAt       DateTime      @default(now())
+  deletedAt       DateTime?
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  membership TenantMembership @relation(fields: [membershipId], references: [id])
+
+  @@index([tenantId])
+  @@index([membershipId, type])
+  @@map("documents")
+}
+
+// Admin-managed, tenant-scoped. Soft-deleted (deletedAt) rather than
+// hard-deleted so historical Advances that reference a removed category
+// stay resolvable -- same convention as Tenant.deletedAt.
+model AdvanceCategory {
+  id        String    @id @default(uuid())
+  tenantId  String
+  name      String
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  advances        Advance[]
+  advanceRequests AdvanceRequest[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("advance_categories")
+}
+
+enum AdvanceRequestStatus {
+  pending
+  approved
+  rejected
+  cancelled
+}
+
+// Employee-initiated counterpart to Advance: any staff member can ask for
+// money ahead of payroll; Super Admin approves or rejects it. This table is
+// only ever the request/decision trail -- approval creates the actual
+// Advance record (see AdvancesService), never mutates this row into one.
+model AdvanceRequest {
+  id                    String               @id @default(uuid())
+  tenantId              String
+  membershipId          String
+  categoryId            String
+  amount                Decimal              @db.Decimal(12, 2)
+  reason                String?
+  recoveryMode          AdvanceRecoveryMode
+  instalmentAmount      Decimal?             @db.Decimal(12, 2)
+  status                AdvanceRequestStatus @default(pending)
+  decidedByMembershipId String?
+  decisionReason        String?
+  createdAdvanceId      String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  membership TenantMembership @relation(fields: [membershipId], references: [id])
+  category   AdvanceCategory  @relation(fields: [categoryId], references: [id])
+
+  @@index([tenantId])
+  @@index([membershipId])
+  @@map("advance_requests")
+}
+
+// Money paid ahead of payroll, recovered from future net pay. recoveredAmount
+// and closedAt are updated only by AdvancesService.applyRecovery, inside the
+// same transaction that writes the matching AdvanceRecovery row -- the two
+// must never drift apart. Outstanding balance is always computed as
+// (amount - recoveredAmount), not stored, so there is exactly one number to
+// keep consistent, not two.
+model Advance {
+  id                    String              @id @default(uuid())
+  tenantId              String
+  membershipId          String
+  categoryId            String
+  amount                Decimal             @db.Decimal(12, 2)
+  dateGiven             DateTime
+  reason                String?
+  recoveryMode          AdvanceRecoveryMode
+  // Only meaningful when recoveryMode = INSTALMENT.
+  instalmentAmount      Decimal?            @db.Decimal(12, 2)
+  recoveredAmount       Decimal             @default(0) @db.Decimal(12, 2)
+  closedAt              DateTime?
+  createdByMembershipId String
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  membership TenantMembership @relation(fields: [membershipId], references: [id])
+  category   AdvanceCategory  @relation(fields: [categoryId], references: [id])
+  recoveries AdvanceRecovery[]
+
+  @@index([tenantId])
+  @@index([membershipId])
+  @@map("advances")
+}
+
+// One row per (advance, pay period) recovery actually applied. year/month
+// mirror Payslip's own period representation -- reused, not reinvented, so
+// the future payroll run and this module agree on what a "period" is.
+// Recording twice for the same advance+period is a no-op via the unique
+// constraint, matching Payslip's own idempotent-generation pattern.
+model AdvanceRecovery {
+  id                     String   @id @default(uuid())
+  tenantId               String
+  advanceId              String
+  membershipId           String
+  year                   Int
+  month                  Int
+  amountRecovered        Decimal  @db.Decimal(12, 2)
+  createdByMembershipId  String
+  createdAt              DateTime @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  advance Advance @relation(fields: [advanceId], references: [id])
+
+  @@unique([advanceId, year, month])
+  @@index([tenantId])
+  @@index([membershipId])
+  @@map("advance_recoveries")
+}
