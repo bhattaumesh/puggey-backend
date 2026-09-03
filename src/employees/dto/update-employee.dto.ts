@@ -4,7 +4,13 @@ import { Transform } from 'class-transformer';
 const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
 
 export class UpdateEmployeeDto {
+  // The edit form always sends the current value, including '' for an employee
+  // whose name was never set -- @IsOptional() alone only skips undefined/null,
+  // not '', so without this an empty name would block saving every other field
+  // too. Same pattern as photoUrl below; the service already no-ops on falsy
+  // fullName instead of clearing it.
   @IsOptional()
+  @ValidateIf((o) => !!o.fullName)
   @IsString()
   @MinLength(1)
   fullName?: string;
