@@ -75,7 +75,10 @@ describe('Payroll (e2e)', () => {
   it('a Supervisor cannot read or change payroll settings, or generate payslips', async () => {
     const get = await request(app.getHttpServer()).get('/payroll/settings').set('Authorization', `Bearer ${supervisorToken}`);
     expect(get.status).toBe(403);
-    const patch = await request(app.getHttpServer()).patch('/payroll/settings').set('Authorization', `Bearer ${supervisorToken}`).send({ incomeTaxPercent: 5, providentFundPercent: 10 });
+    const patch = await request(app.getHttpServer())
+      .patch('/payroll/settings')
+      .set('Authorization', `Bearer ${supervisorToken}`)
+      .send({ incomeTaxPercent: 5, contributionScheme: 'PF_GRATUITY', employeeContributionPercent: 10, employerContributionPercent: 10 });
     expect(patch.status).toBe(403);
     const gen = await request(app.getHttpServer()).post('/payroll/generate').set('Authorization', `Bearer ${supervisorToken}`).send({ year: 2026, month: 1 });
     expect(gen.status).toBe(403);
@@ -103,12 +106,14 @@ describe('Payroll (e2e)', () => {
     const patch = await request(app.getHttpServer())
       .patch('/payroll/settings')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ incomeTaxPercent: 10, providentFundPercent: 5 });
+      .send({ incomeTaxPercent: 10, contributionScheme: 'SSF', employeeContributionPercent: 5, employerContributionPercent: 20 });
     expect(patch.status).toBe(200);
 
     const get = await request(app.getHttpServer()).get('/payroll/settings').set('Authorization', `Bearer ${adminToken}`);
     expect(Number(get.body.incomeTaxPercent)).toBe(10);
-    expect(Number(get.body.providentFundPercent)).toBe(5);
+    expect(get.body.contributionScheme).toBe('SSF');
+    expect(Number(get.body.employeeContributionPercent)).toBe(5);
+    expect(Number(get.body.employerContributionPercent)).toBe(20);
   });
 
   it('generating payslips computes tax/PF/net correctly from baseSalary, and skips members with no baseSalary set', async () => {

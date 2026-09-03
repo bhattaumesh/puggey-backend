@@ -102,8 +102,8 @@ describe('Payroll single-employee generation (e2e)', () => {
   it('regenerating a single employee is an idempotent overwrite, matching create-and-edit semantics', async () => {
     await setupPrisma.payrollSettings.upsert({
       where: { tenantId: tenant.id },
-      create: { tenantId: tenant.id, incomeTaxPercent: 10, providentFundPercent: 0 },
-      update: { incomeTaxPercent: 10, providentFundPercent: 0 },
+      create: { tenantId: tenant.id, incomeTaxPercent: 10, employeeContributionPercent: 0 },
+      update: { incomeTaxPercent: 10, employeeContributionPercent: 0 },
     });
 
     const res = await request(app.getHttpServer())

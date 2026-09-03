@@ -85,17 +85,31 @@ export class PayrollService {
   getSettings() {
     return this.tenantPrisma.run(async (tx) => {
       const existing = await tx.payrollSettings.findUnique({ where: { tenantId: this.ctx.tenantId! } });
-      return existing ?? { tenantId: this.ctx.tenantId!, incomeTaxPercent: 0, providentFundPercent: 0 };
+      return (
+        existing ?? {
+          tenantId: this.ctx.tenantId!,
+          incomeTaxPercent: 0,
+          contributionScheme: 'NONE' as const,
+          employeeContributionPercent: 0,
+          employerContributionPercent: 0,
+        }
+      );
     });
   }
 
   updateSettings(dto: UpdatePayrollSettingsDto) {
     const tenantId = this.ctx.tenantId!;
+    const fields = {
+      incomeTaxPercent: dto.incomeTaxPercent,
+      contributionScheme: dto.contributionScheme,
+      employeeContributionPercent: dto.employeeContributionPercent,
+      employerContributionPercent: dto.employerContributionPercent,
+    };
     return this.tenantPrisma.run((tx) =>
       tx.payrollSettings.upsert({
         where: { tenantId },
-        create: { tenantId, incomeTaxPercent: dto.incomeTaxPercent, providentFundPercent: dto.providentFundPercent },
-        update: { incomeTaxPercent: dto.incomeTaxPercent, providentFundPercent: dto.providentFundPercent },
+        create: { tenantId, ...fields },
+        update: fields,
       }),
     );
   }
@@ -109,7 +123,8 @@ export class PayrollService {
       const generatedByMembershipId = await this.myMembershipId(tx);
       const settings = await tx.payrollSettings.findUnique({ where: { tenantId } });
       const taxPct = settings ? Number(settings.incomeTaxPercent) : 0;
-      const pfPct = settings ? Number(settings.providentFundPercent) : 0;
+      const employeePct = settings ? Number(settings.employeeContributionPercent) : 0;
+      const employerPct = settings ? Number(settings.employerContributionPercent) : 0;
 
       const members = await tx.tenantMembership.findMany({
         where: { tenantId, status: 'active', baseSalary: { not: null }, ...(dto.membershipId ? { id: dto.membershipId } : {}) },
@@ -125,7 +140,8 @@ export class PayrollService {
       for (const m of members) {
         const gross = Number(m.baseSalary);
         const incomeTax = round2(gross * (taxPct / 100));
-        const providentFund = round2(gross * (pfPct / 100));
+        const providentFund = round2(gross * (employeePct / 100));
+        const employerContribution = round2(gross * (employerPct / 100));
         const netPay = round2(gross - incomeTax - providentFund);
         const previousMonthReceivable = round2(receivableByMember.get(m.id) ?? 0);
         const adjustedPay = round2(netPay + previousMonthReceivable);
@@ -144,8 +160,8 @@ export class PayrollService {
 
         const payslip = await tx.payslip.upsert({
           where: { membershipId_year_month: { membershipId: m.id, year: dto.year, month: dto.month } },
-          create: { tenantId, membershipId: m.id, year: dto.year, month: dto.month, grossPay: gross, incomeTax, providentFund, netPay, previousMonthReceivable, advanceRecovery, netPayable, generatedByMembershipId },
-          update: { grossPay: gross, incomeTax, providentFund, netPay, previousMonthReceivable, advanceRecovery, netPayable, generatedByMembershipId },
+          create: { tenantId, membershipId: m.id, year: dto.year, month: dto.month, grossPay: gross, incomeTax, providentFund, employerContribution, netPay, previousMonthReceivable, advanceRecovery, netPayable, generatedByMembershipId },
+          update: { grossPay: gross, incomeTax, providentFund, employerContribution, netPay, previousMonthReceivable, advanceRecovery, netPayable, generatedByMembershipId },
         });
 
         if (advanceRecovery > 0) {
@@ -187,11 +203,13 @@ export class PayrollService {
       }
       const settings = await tx.payrollSettings.findUnique({ where: { tenantId } });
       const taxPct = settings ? Number(settings.incomeTaxPercent) : 0;
-      const pfPct = settings ? Number(settings.providentFundPercent) : 0;
+      const employeePct = settings ? Number(settings.employeeContributionPercent) : 0;
+      const employerPct = settings ? Number(settings.employerContributionPercent) : 0;
 
       const gross = Number(member.baseSalary);
       const incomeTax = round2(gross * (taxPct / 100));
-      const providentFund = round2(gross * (pfPct / 100));
+      const providentFund = round2(gross * (employeePct / 100));
+      const employerContribution = round2(gross * (employerPct / 100));
       const netPay = round2(gross - incomeTax - providentFund);
       const receivable = round2(previousMonthReceivable || 0);
       const adjustedPay = round2(netPay + receivable);
@@ -206,6 +224,7 @@ export class PayrollService {
         grossPay: gross,
         incomeTax,
         providentFund,
+        employerContribution,
         netPay,
         previousMonthReceivable: receivable,
         advanceRecovery,
@@ -269,6 +288,7 @@ export class PayrollService {
       grossPay: Number(payslip.grossPay),
       incomeTax: Number(payslip.incomeTax),
       providentFund: Number(payslip.providentFund),
+      employerContribution: Number(payslip.employerContribution),
       netPay: Number(payslip.netPay),
       previousMonthReceivable: Number(payslip.previousMonthReceivable),
       advanceRecovery: Number(payslip.advanceRecovery),

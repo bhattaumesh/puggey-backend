@@ -60,6 +60,14 @@ enum DocumentType {
   DRIVING_LICENCE
 }
 
+// Which statutory contribution structure the tenant's admin says applies --
+// Pugey does not decide this or its rates; see PayrollSettings below.
+enum PayrollContributionScheme {
+  NONE
+  PF_GRATUITY
+  SSF
+}
+
 enum AdvanceRecoveryMode {
   FULL
   INSTALMENT
@@ -408,12 +416,24 @@ model ProductReceivedLog {
 // own admin enters a rate they have verified with an accountant. One row per
 // tenant.
 model PayrollSettings {
-  id                     String   @id @default(uuid())
-  tenantId               String   @unique
-  incomeTaxPercent       Decimal  @default(0) @db.Decimal(5, 2)
-  providentFundPercent   Decimal  @default(0) @db.Decimal(5, 2)
-  updatedAt              DateTime @updatedAt
-  createdAt              DateTime @default(now())
+  id               String                     @id @default(uuid())
+  tenantId         String                     @unique
+  incomeTaxPercent Decimal                    @default(0) @db.Decimal(5, 2)
+  // Which structure the tenant's admin says applies (see enum above). NONE
+  // means no contribution line is deducted or reported at all -- this is
+  // purely what the admin selects, never inferred or defaulted for them.
+  contributionScheme PayrollContributionScheme @default(NONE)
+  // Deducted from gross pay into netPay, same role incomeTaxPercent plays --
+  // whatever the admin says the employee's side of the chosen scheme is
+  // (e.g. SSF's 11%, or the old PF's 10%).
+  employeeContributionPercent Decimal          @default(0) @db.Decimal(5, 2)
+  // Never deducted from the employee's pay -- the company's own cost side
+  // of the chosen scheme (e.g. SSF's 20%), recorded for the tenant's own
+  // accounting/reporting only. Frozen onto each Payslip at generation time,
+  // same as the employee-side figures.
+  employerContributionPercent Decimal          @default(0) @db.Decimal(5, 2)
+  updatedAt        DateTime                   @updatedAt
+  createdAt        DateTime                   @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
 
@@ -441,8 +461,14 @@ model Payslip {
   month                Int
   grossPay             Decimal  @db.Decimal(12, 2)
   incomeTax            Decimal  @db.Decimal(12, 2)
+  // Employee-side contribution deduction (PF, or SSF's employee share) --
+  // column name kept from Phase 8 to avoid churning historical rows; it
+  // covers whichever PayrollContributionScheme was active at generation time.
   providentFund        Decimal  @db.Decimal(12, 2)
-  // Salary after tax and provident fund -- unchanged meaning since Phase 8.
+  // Company-side cost of the same scheme, never subtracted from netPay --
+  // frozen here purely for the tenant's own records/reporting.
+  employerContribution Decimal  @default(0) @db.Decimal(12, 2)
+  // Salary after tax and employee-side contribution -- unchanged meaning since Phase 8.
   netPay               Decimal  @db.Decimal(12, 2)
   // Amount carried forward from a prior period that was owed to the
   // employee but not yet paid out (e.g. a correction or a delayed

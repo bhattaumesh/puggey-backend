@@ -11,6 +11,7 @@ export interface PayslipPdfInput {
   grossPay: number;
   incomeTax: number;
   providentFund: number;
+  employerContribution: number;
   netPay: number;
   previousMonthReceivable: number;
   advanceRecovery: number;
@@ -90,7 +91,16 @@ export function renderPayslipPdf(input: PayslipPdfInput): Promise<Buffer> {
     y += 10;
     row('Net payable', input.netPayable, { bold: true });
 
-    y += 30;
+    y += 15;
+    if (input.employerContribution > 0) {
+      doc
+        .fontSize(8)
+        .font('Helvetica')
+        .fillColor('#666666')
+        .text(`Employer contribution this period (not deducted from pay): ${money(input.employerContribution)}`, 50, y, { width: 495 });
+      y += 18;
+    }
+
     doc
       .fontSize(8)
       .font('Helvetica')

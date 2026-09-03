@@ -9,7 +9,8 @@ import { AppModule } from './app.module';
 // integrations in ExternalController), only on which web pages' own JS may
 // call this API directly.
 const ALLOWED_ORIGINS = [
-  'https://pugey-web-production.up.railway.app',
+  'https://puggey.com',
+  'https://www.puggey.com',
   'http://localhost:5173',
 ];
 
