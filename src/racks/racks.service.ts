@@ -9,6 +9,7 @@ import { CreateRackDto } from './dto/create-rack.dto';
 import { UpdateRackDto } from './dto/update-rack.dto';
 import { CleanRackDto } from './dto/clean-rack.dto';
 import { AssignRackDto } from './dto/assign-rack.dto';
+import { RateCleaningDto } from './dto/rate-cleaning.dto';
 
 const PENDING_AFTER_DAYS = 30;
 
@@ -263,7 +264,10 @@ export class RacksService {
         where: { rackId },
         orderBy: { cleanedAt: 'desc' },
         take: limit,
-        include: { membership: { include: { user: { select: { fullName: true, email: true } } } } },
+        include: {
+          membership: { include: { user: { select: { fullName: true, email: true } } } },
+          ratedBy: { include: { user: { select: { fullName: true, email: true } } } },
+        },
       });
     });
   }
@@ -290,6 +294,25 @@ export class RacksService {
       }
 
       return log;
+    });
+  }
+
+  // Supervisor/admin reviews a completed cleaning and scores it -- separate
+  // from clean() because the person rating is never the person who cleaned;
+  // route access already restricts this to SUPER_ADMIN/SUPERVISOR.
+  async rateCleaning(logId: string, dto: RateCleaningDto) {
+    return this.tenantPrisma.run(async (tx) => {
+      const existing = await tx.rackCleaningLog.findUnique({ where: { id: logId } });
+      if (!existing) throw new NotFoundException({ error: 'not_found', message: 'No such cleaning log.' });
+      const raterMembershipId = await this.myMembershipId(tx);
+      return tx.rackCleaningLog.update({
+        where: { id: logId },
+        data: { qualityRating: dto.qualityRating, ratedByMembershipId: raterMembershipId, ratedAt: new Date() },
+        include: {
+          membership: { include: { user: { select: { fullName: true, email: true } } } },
+          ratedBy: { include: { user: { select: { fullName: true, email: true } } } },
+        },
+      });
     });
   }
 }

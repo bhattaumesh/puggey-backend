@@ -94,6 +94,14 @@ model Tenant {
   fiscalYearStartMonth Int          @default(7)
   logoUrl              String?
   accentColorHex       String?      @default("#388E3C")
+  // Racks/vendors/product-received are a retail-store-specific module set
+  // (built for Niuto's own use), not something every org needs -- a school
+  // or a service business has no use for "rack cleaning." Defaults true so
+  // existing tenants see no change; a tenant admin turns it off in Settings
+  // once they realize it doesn't apply to them. Not asked at signup
+  // deliberately -- keeps the signup wizard unchanged, and "toggle it off
+  // once you notice" is a smaller decision than "commit to it up front."
+  retailModulesEnabled Boolean      @default(true)
   companyCode          String?      @unique // fallback identifier for shared-domain logins
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
@@ -243,7 +251,8 @@ model TenantMembership {
   advanceRequests  AdvanceRequest[]
   tasksAssigned    Task[]             @relation("TaskAssignee")
   tasksCreated     Task[]             @relation("TaskAssigner")
-  rackCleaningLogs RackCleaningLog[]
+  rackCleaningLogs RackCleaningLog[] @relation("RackCleaningLogCleaner")
+  rackCleaningLogsRated RackCleaningLog[] @relation("RackCleaningLogRater")
   rackAssignmentsReceived RackAssignment[] @relation("RackAssignee")
   rackAssignmentsGiven    RackAssignment[] @relation("RackAssigner")
   productReceivedLogs ProductReceivedLog[]
@@ -320,11 +329,18 @@ model RackCleaningLog {
   membershipId String
   cleanedAt    DateTime @default(now())
   remarks      String?
+  // Set later by a supervisor/admin reviewing the job, not by the cleaner --
+  // null until someone rates it. 1-5, range enforced in the DTO rather than
+  // a DB constraint, same approach as the payroll percent fields.
+  qualityRating       Int?
+  ratedByMembershipId String?
+  ratedAt             DateTime?
 
-  tenant     Tenant           @relation(fields: [tenantId], references: [id])
-  rack       Rack             @relation(fields: [rackId], references: [id])
-  membership TenantMembership @relation(fields: [membershipId], references: [id])
-  assignment RackAssignment?
+  tenant       Tenant            @relation(fields: [tenantId], references: [id])
+  rack         Rack              @relation(fields: [rackId], references: [id])
+  membership   TenantMembership  @relation("RackCleaningLogCleaner", fields: [membershipId], references: [id])
+  ratedBy      TenantMembership? @relation("RackCleaningLogRater", fields: [ratedByMembershipId], references: [id])
+  assignment   RackAssignment?
 
   @@index([tenantId])
   @@index([rackId])
