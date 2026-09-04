@@ -93,7 +93,7 @@ model Tenant {
   // must go through the BS conversion library at the point of use, not this fixed field.
   fiscalYearStartMonth Int          @default(7)
   logoUrl              String?
-  accentColorHex       String?      @default("#3EA832")
+  accentColorHex       String?      @default("#388E3C")
   companyCode          String?      @unique // fallback identifier for shared-domain logins
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt

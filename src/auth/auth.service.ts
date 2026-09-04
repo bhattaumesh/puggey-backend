@@ -187,14 +187,14 @@ export class AuthService {
     if (!user || user.disabled) {
       throw new UnauthorizedException({
         error: 'no_account',
-        message: 'No Pugey account uses this Google email yet. Ask your admin for an invite.',
+        message: 'No Puggey account uses this Google email yet. Ask your admin for an invite.',
       });
     }
 
     const resolved = this.resolveMembership(user, companyCode);
     if ('error' in resolved) {
       if (resolved.error === 'company_code_required') return resolved;
-      throw new UnauthorizedException({ error: 'no_account', message: 'No Pugey account uses this Google email yet.' });
+      throw new UnauthorizedException({ error: 'no_account', message: 'No Puggey account uses this Google email yet.' });
     }
 
     return this.issueSession(user, resolved.membership);

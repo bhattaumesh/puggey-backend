@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { formatCurrency } from '../common/currency.util';
 
 export interface PayslipPdfInput {
   tenantName: string;
@@ -20,7 +21,7 @@ export interface PayslipPdfInput {
 }
 
 function money(n: number): string {
-  return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatCurrency(n, { decimals: 2 });
 }
 
 // A4 payslip, built with plain Helvetica only (no embedded Unicode font),
@@ -45,7 +46,7 @@ export function renderPayslipPdf(input: PayslipPdfInput): Promise<Buffer> {
       }
     }
     doc.fontSize(18).font('Helvetica-Bold').text(input.tenantName, textLeft, 50);
-    doc.fontSize(9).font('Helvetica').fillColor('#666666').text('Powered by Pugey', textLeft, 72);
+    doc.fontSize(9).font('Helvetica').fillColor('#666666').text('Powered by Puggey', textLeft, 72);
     doc.fillColor('#000000');
 
     doc.fontSize(14).font('Helvetica-Bold').text('PAYSLIP', 50, 115, { align: 'center' });

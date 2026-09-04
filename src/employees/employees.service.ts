@@ -263,7 +263,7 @@ export class EmployeesService {
         if (activeCount >= limit) {
           throw new BadRequestException({
             error: 'plan_limit_reached',
-            message: `The ${planLabel(tenantForLimit?.plan ?? 'trial')} plan allows up to ${limit} employees. Ask your Pugey contact about upgrading.`,
+            message: `The ${planLabel(tenantForLimit?.plan ?? 'trial')} plan allows up to ${limit} employees. Ask your Puggey contact about upgrading.`,
           });
         }
       }
@@ -303,7 +303,7 @@ export class EmployeesService {
         tenantId,
         userId: user.id,
         type: 'welcome',
-        message: `You were added to ${tenant?.name ?? 'your company'} on Pugey.`,
+        message: `You were added to ${tenant?.name ?? 'your company'} on Puggey.`,
       });
 
       const admins = await tx.tenantMembership.findMany({

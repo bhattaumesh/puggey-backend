@@ -15,7 +15,7 @@ export class EmailService {
   }
 
   private get fromAddress() {
-    return process.env.RESEND_FROM_EMAIL ?? 'Pugey <onboarding@resend.dev>';
+    return process.env.RESEND_FROM_EMAIL ?? 'Puggey <onboarding@resend.dev>';
   }
 
   async send(to: string, subject: string, html: string): Promise<void> {
@@ -45,8 +45,8 @@ export class EmailService {
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
     await this.send(
       to,
-      'Reset your Pugey password',
-      `<p>Someone requested a password reset for this email on Pugey.</p>
+      'Reset your Puggey password',
+      `<p>Someone requested a password reset for this email on Puggey.</p>
        <p><a href="${resetUrl}">Click here to set a new password</a>. This link expires in 1 hour.</p>
        <p>If you didn't request this, you can ignore this email.</p>`,
     );

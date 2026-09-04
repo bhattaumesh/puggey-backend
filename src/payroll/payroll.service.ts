@@ -278,7 +278,7 @@ export class PayrollService {
     const periodLabel = `${monthName} ${payslip.year}${isBs ? ' BS' : ''}`;
 
     return renderPayslipPdf({
-      tenantName: tenant?.name ?? 'Pugey',
+      tenantName: tenant?.name ?? 'Puggey',
       logoBuffer,
       periodLabel,
       employeeName: payslip.membership.user.fullName || payslip.membership.user.email,

@@ -5,6 +5,7 @@ import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { TenantContextService } from '../common/tenant-context.service';
 import { runInTenantContext } from '../prisma/rls.util';
 import { NotificationsService } from '../notifications/notifications.service';
+import { formatCurrency } from '../common/currency.util';
 import { AdvancesService } from './advances.service';
 import { SubmitAdvanceRequestDto } from './dto/submit-advance-request.dto';
 import { DecideAdvanceRequestDto } from './dto/decide-advance-request.dto';
@@ -77,7 +78,7 @@ export class AdvanceRequestsService {
           tenantId: this.ctx.tenantId!,
           userId,
           type: 'advance_request_submitted',
-          message: `${result.requesterName} requested an advance of ${Number(result.request.amount).toLocaleString()} (${result.request.category.name}) and needs your decision.`,
+          message: `${result.requesterName} requested an advance of ${formatCurrency(Number(result.request.amount))} (${result.request.category.name}) and needs your decision.`,
         });
       }
     });

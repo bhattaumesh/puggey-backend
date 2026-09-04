@@ -19,7 +19,7 @@ async function main() {
       slug: 'niuto',
       name: 'Niuto Store',
       status: 'active',
-      accentColorHex: '#3EA832',
+      accentColorHex: '#388E3C',
       companyCode: 'NIUTO',
     },
   });
@@ -31,7 +31,7 @@ async function main() {
       slug: 'acme',
       name: 'Acme Traders',
       status: 'active',
-      accentColorHex: '#3EA832',
+      accentColorHex: '#388E3C',
       companyCode: 'ACME',
     },
   });
