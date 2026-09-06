@@ -12,8 +12,9 @@ import { UpdateReceiptProductDto } from './dto/update-receipt-product.dto';
 export class VendorsController {
   constructor(private readonly vendors: VendorsService) {}
 
-  @UseGuards(RolesGuard)
-  @Roles('SUPER_ADMIN')
+  // Any employee can add a new vendor -- they type the name straight into
+  // the receive-product form, and if it doesn't match an existing one this
+  // is what creates it inline, not a separate admin-only step.
   @Post()
   create(@Body() dto: CreateVendorDto) {
     return this.vendors.createVendor(dto);

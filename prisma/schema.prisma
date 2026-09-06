@@ -402,8 +402,8 @@ model RackAssignment {
 
 // A supplier the store receives goods from. Deliberately just a name --
 // no contact/address fields, since nothing in this command asked for
-// them -- any employee can pick one to log a receipt against, only an
-// admin can create one.
+// them -- any employee can pick one to log a receipt against, or type a
+// new name to create one inline, right from the receive-product form.
 model Vendor {
   id        String   @id @default(uuid())
   tenantId  String
