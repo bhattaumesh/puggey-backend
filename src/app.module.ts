@@ -26,6 +26,8 @@ import { RacksModule } from './racks/racks.module';
 import { VendorsModule } from './vendors/vendors.module';
 import { ProductsModule } from './products/products.module';
 import { ShiftsModule } from './shifts/shifts.module';
+import { BillsModule } from './bills/bills.module';
+import { CountersModule } from './counters/counters.module';
 
 @Module({
   imports: [
@@ -53,6 +55,8 @@ import { ShiftsModule } from './shifts/shifts.module';
     VendorsModule,
     ProductsModule,
     ShiftsModule,
+    BillsModule,
+    CountersModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

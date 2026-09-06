@@ -134,6 +134,10 @@ model Tenant {
   productReceivedLogs  ProductReceivedLog[]
   shifts               Shift[]
   shiftAssignments     ShiftAssignment[]
+  bills                Bill[]
+  counters             Counter[]
+  counterSessions      CounterSession[]
+  counterCashMovements CounterCashMovement[]
 
   @@map("tenants")
 }
@@ -261,6 +265,11 @@ model TenantMembership {
   productReceivedLogs ProductReceivedLog[]
   shiftAssignmentsReceived ShiftAssignment[] @relation("ShiftAssignee")
   shiftAssignmentsGiven    ShiftAssignment[] @relation("ShiftAssigner")
+  billsEntered             Bill[]            @relation("BillEnteredBy")
+  billsMarkedPaid          Bill[]            @relation("BillPaidBy")
+  counterSessionsHandled   CounterSession[]  @relation("CounterHandler")
+  counterSessionsAssigned  CounterSession[]  @relation("CounterAssigner")
+  counterCashMovements     CounterCashMovement[]
 
   @@unique([tenantId, userId])
   @@unique([tenantId, employeeCode])
@@ -403,6 +412,7 @@ model Vendor {
 
   tenant   Tenant               @relation(fields: [tenantId], references: [id])
   receipts ProductReceivedLog[]
+  bills    Bill[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -964,4 +974,117 @@ model AdvanceRecovery {
   @@index([tenantId])
   @@index([membershipId])
   @@map("advance_recoveries")
+}
+
+enum BillStatus {
+  pending
+  paid
+}
+
+// A vendor bill/invoice the store owes on. Deliberately separate from
+// ProductReceivedLog -- receiving goods and owing money for them are
+// different events (a bill can arrive before, with, or after the goods,
+// and paying it is a separate decision from logging the delivery).
+model Bill {
+  id                 String     @id @default(uuid())
+  tenantId           String
+  vendorId           String?
+  membershipId       String
+  billNumber         String?
+  amount             Decimal    @db.Decimal(12, 2)
+  billDate           DateTime
+  status             BillStatus @default(pending)
+  paidAt             DateTime?
+  paidByMembershipId String?
+  remarks            String?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  tenant     Tenant            @relation(fields: [tenantId], references: [id])
+  vendor     Vendor?           @relation(fields: [vendorId], references: [id])
+  membership TenantMembership  @relation("BillEnteredBy", fields: [membershipId], references: [id])
+  paidBy     TenantMembership? @relation("BillPaidBy", fields: [paidByMembershipId], references: [id])
+
+  @@index([tenantId])
+  @@index([status])
+  @@map("bills")
+}
+
+// A physical point-of-sale counter/till. Just a name -- same minimal shape
+// as Vendor/Shift, since nothing here asked for more.
+model Counter {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  createdAt DateTime @default(now())
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id])
+  sessions CounterSession[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("counters")
+}
+
+enum CounterSessionStatus {
+  open
+  closed
+}
+
+// One handover-to-handover stretch of a counter being worked. Denomination
+// breakdowns are stored as-entered (Json: note/coin value -> count) so the
+// closing report can show exactly what was counted, not just a total --
+// the total itself is also stored redundantly for cheap querying/display.
+model CounterSession {
+  id                     String               @id @default(uuid())
+  tenantId               String
+  counterId              String
+  membershipId           String
+  assignedByMembershipId String
+  status                 CounterSessionStatus @default(open)
+  openingCash            Decimal              @db.Decimal(12, 2)
+  openingDenominations   Json
+  closingCash            Decimal?             @db.Decimal(12, 2)
+  closingDenominations   Json?
+  openedAt               DateTime             @default(now())
+  closedAt               DateTime?
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+
+  tenant     Tenant                @relation(fields: [tenantId], references: [id])
+  counter    Counter               @relation(fields: [counterId], references: [id])
+  membership TenantMembership      @relation("CounterHandler", fields: [membershipId], references: [id])
+  assignedBy TenantMembership      @relation("CounterAssigner", fields: [assignedByMembershipId], references: [id])
+  movements  CounterCashMovement[]
+
+  @@index([tenantId])
+  @@index([membershipId])
+  @@map("counter_sessions")
+}
+
+enum CashMovementType {
+  inflow
+  outflow
+}
+
+// A cash-in/cash-out event during an open counter session (a bank drop, a
+// float top-up, a refund paid from the till, etc.) -- what the closing
+// report reconciles opening cash against, alongside the final count.
+model CounterCashMovement {
+  id               String           @id @default(uuid())
+  tenantId         String
+  counterSessionId String
+  type             CashMovementType
+  amount           Decimal          @db.Decimal(12, 2)
+  reason           String
+  membershipId     String
+  createdAt        DateTime         @default(now())
+
+  tenant         Tenant           @relation(fields: [tenantId], references: [id])
+  counterSession CounterSession   @relation(fields: [counterSessionId], references: [id])
+  membership     TenantMembership @relation(fields: [membershipId], references: [id])
+
+  @@index([tenantId])
+  @@index([counterSessionId])
+  @@map("counter_cash_movements")
 }
