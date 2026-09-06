@@ -38,7 +38,7 @@ describe('Dashboard summary (e2e)', () => {
     await app.init();
 
     const passwordHash = await bcrypt.hash('DashTest123!', 10);
-    tenant = await setupPrisma.tenant.create({ data: { slug: `dash-${SUFFIX}`, name: 'Dashboard Test Co', plan: 'growth' } });
+    tenant = await setupPrisma.tenant.create({ data: { slug: `dash-${SUFFIX}`, name: 'Dashboard Test Co', plan: 'gold' } });
 
     const adminUser = await setupPrisma.user.create({ data: { email: `dash-admin-${SUFFIX}@test.local`, passwordHash } });
     const supervisorUser = await setupPrisma.user.create({ data: { email: `dash-supervisor-${SUFFIX}@test.local`, passwordHash } });

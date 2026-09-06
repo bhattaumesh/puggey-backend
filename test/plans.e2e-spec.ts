@@ -101,10 +101,10 @@ describe('Plans (e2e)', () => {
     expect(row.employeeCount).toBe(5);
   });
 
-  it('platform staff moves the tenant to growth (limit 50), which immediately lifts the block', async () => {
-    const move = await request(app.getHttpServer()).patch(`/tenants/${tenant.id}/plan`).set('Authorization', `Bearer ${platformStaffToken}`).send({ plan: 'growth' });
+  it('platform staff moves the tenant to gold (limit 40), which immediately lifts the block', async () => {
+    const move = await request(app.getHttpServer()).patch(`/tenants/${tenant.id}/plan`).set('Authorization', `Bearer ${platformStaffToken}`).send({ plan: 'gold' });
     expect(move.status).toBe(200);
-    expect(move.body.plan).toBe('growth');
+    expect(move.body.plan).toBe('gold');
 
     const res = await request(app.getHttpServer())
       .post('/employees')
@@ -113,7 +113,7 @@ describe('Plans (e2e)', () => {
     expect(res.status).toBe(201);
 
     const me = await request(app.getHttpServer()).get('/tenants/me').set('Authorization', `Bearer ${adminToken}`);
-    expect(me.body.employeeLimit).toBe(50);
+    expect(me.body.employeeLimit).toBe(40);
     expect(me.body.employeeCount).toBe(6);
   });
 

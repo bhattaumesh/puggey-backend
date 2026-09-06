@@ -30,7 +30,7 @@ describe('Payroll single-employee generation (e2e)', () => {
     await app.init();
 
     const passwordHash = await bcrypt.hash('PayrollSingleTest123!', 10);
-    tenant = await setupPrisma.tenant.create({ data: { slug: `payroll-single-${SUFFIX}`, name: 'Payroll Single Test Co', plan: 'growth' } });
+    tenant = await setupPrisma.tenant.create({ data: { slug: `payroll-single-${SUFFIX}`, name: 'Payroll Single Test Co', plan: 'gold' } });
 
     const adminUser = await setupPrisma.user.create({ data: { email: `payroll-single-admin-${SUFFIX}@test.local`, passwordHash } });
     const employeeAUser = await setupPrisma.user.create({ data: { email: `payroll-single-a-${SUFFIX}@test.local`, passwordHash } });

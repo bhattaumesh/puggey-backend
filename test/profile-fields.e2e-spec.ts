@@ -32,7 +32,7 @@ describe('Profile fields (e2e)', () => {
     await app.init();
 
     const passwordHash = await bcrypt.hash('ProfileTest123!', 10);
-    tenant = await setupPrisma.tenant.create({ data: { slug: `profile-${SUFFIX}`, name: 'Profile Test Co', plan: 'growth' } });
+    tenant = await setupPrisma.tenant.create({ data: { slug: `profile-${SUFFIX}`, name: 'Profile Test Co', plan: 'gold' } });
 
     const adminUser = await setupPrisma.user.create({ data: { email: `profile-admin-${SUFFIX}@test.local`, passwordHash } });
     const supervisorUser = await setupPrisma.user.create({ data: { email: `profile-supervisor-${SUFFIX}@test.local`, passwordHash } });

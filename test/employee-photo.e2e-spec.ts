@@ -29,7 +29,7 @@ describe('Employee photo upload (e2e)', () => {
     await app.init();
 
     const passwordHash = await bcrypt.hash('PhotoTest123!', 10);
-    tenant = await setupPrisma.tenant.create({ data: { slug: `photo-${SUFFIX}`, name: 'Photo Test Co', plan: 'growth' } });
+    tenant = await setupPrisma.tenant.create({ data: { slug: `photo-${SUFFIX}`, name: 'Photo Test Co', plan: 'gold' } });
 
     const adminUser = await setupPrisma.user.create({ data: { email: `photo-admin-${SUFFIX}@test.local`, passwordHash } });
     const employeeUser = await setupPrisma.user.create({ data: { email: `photo-employee-${SUFFIX}@test.local`, passwordHash } });

@@ -33,8 +33,8 @@ describe('Employees remove (e2e)', () => {
     await app.init();
 
     const passwordHash = await bcrypt.hash('EmpRemoveTest123!', 10);
-    tenant = await setupPrisma.tenant.create({ data: { slug: `emp-remove-${SUFFIX}`, name: 'Emp Remove Test Co', plan: 'growth' } });
-    otherTenant = await setupPrisma.tenant.create({ data: { slug: `emp-remove-other-${SUFFIX}`, name: 'Emp Remove Other Co', plan: 'growth' } });
+    tenant = await setupPrisma.tenant.create({ data: { slug: `emp-remove-${SUFFIX}`, name: 'Emp Remove Test Co', plan: 'gold' } });
+    otherTenant = await setupPrisma.tenant.create({ data: { slug: `emp-remove-other-${SUFFIX}`, name: 'Emp Remove Other Co', plan: 'gold' } });
 
     const adminUser = await setupPrisma.user.create({ data: { email: `emp-remove-admin-${SUFFIX}@test.local`, passwordHash } });
     const employeeUser = await setupPrisma.user.create({ data: { email: `emp-remove-employee-${SUFFIX}@test.local`, passwordHash } });

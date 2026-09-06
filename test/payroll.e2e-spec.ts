@@ -34,8 +34,8 @@ describe('Payroll (e2e)', () => {
     await app.init();
 
     const passwordHash = await bcrypt.hash('PayrollTest123!', 10);
-    tenant = await setupPrisma.tenant.create({ data: { slug: `payroll-${SUFFIX}`, name: 'Payroll Test Co', plan: 'growth' } });
-    otherTenant = await setupPrisma.tenant.create({ data: { slug: `payroll-other-${SUFFIX}`, name: 'Payroll Other Co', plan: 'growth' } });
+    tenant = await setupPrisma.tenant.create({ data: { slug: `payroll-${SUFFIX}`, name: 'Payroll Test Co', plan: 'gold' } });
+    otherTenant = await setupPrisma.tenant.create({ data: { slug: `payroll-other-${SUFFIX}`, name: 'Payroll Other Co', plan: 'gold' } });
 
     const adminUser = await setupPrisma.user.create({ data: { email: `payroll-admin-${SUFFIX}@test.local`, passwordHash } });
     const supervisorUser = await setupPrisma.user.create({ data: { email: `payroll-supervisor-${SUFFIX}@test.local`, passwordHash } });

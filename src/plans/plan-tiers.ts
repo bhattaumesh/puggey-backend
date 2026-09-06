@@ -6,9 +6,10 @@
 // tiers.
 export const PLAN_TIERS = {
   trial: { label: 'Trial', maxEmployees: 5 },
-  starter: { label: 'Starter', maxEmployees: 15 },
-  growth: { label: 'Growth', maxEmployees: 50 },
-  enterprise: { label: 'Enterprise', maxEmployees: null as number | null },
+  basic: { label: 'Basic', maxEmployees: 10 },
+  silver: { label: 'Silver', maxEmployees: 20 },
+  gold: { label: 'Gold', maxEmployees: 40 },
+  platinum: { label: 'Platinum', maxEmployees: null as number | null },
 } as const;
 
 export type PlanKey = keyof typeof PLAN_TIERS;

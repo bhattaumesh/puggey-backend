@@ -35,8 +35,8 @@ describe('Documents (e2e)', () => {
     await app.init();
 
     const passwordHash = await bcrypt.hash('DocsTest123!', 10);
-    tenant = await setupPrisma.tenant.create({ data: { slug: `docs-${SUFFIX}`, name: 'Docs Test Co', plan: 'growth' } });
-    otherTenant = await setupPrisma.tenant.create({ data: { slug: `docs-other-${SUFFIX}`, name: 'Docs Other Co', plan: 'growth' } });
+    tenant = await setupPrisma.tenant.create({ data: { slug: `docs-${SUFFIX}`, name: 'Docs Test Co', plan: 'gold' } });
+    otherTenant = await setupPrisma.tenant.create({ data: { slug: `docs-other-${SUFFIX}`, name: 'Docs Other Co', plan: 'gold' } });
 
     const adminUser = await setupPrisma.user.create({ data: { email: `docs-admin-${SUFFIX}@test.local`, passwordHash } });
     const employeeUser = await setupPrisma.user.create({ data: { email: `docs-employee-${SUFFIX}@test.local`, passwordHash } });
