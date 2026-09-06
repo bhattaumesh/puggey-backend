@@ -132,6 +132,8 @@ model Tenant {
   vendors              Vendor[]
   products             Product[]
   productReceivedLogs  ProductReceivedLog[]
+  shifts               Shift[]
+  shiftAssignments     ShiftAssignment[]
 
   @@map("tenants")
 }
@@ -257,6 +259,8 @@ model TenantMembership {
   rackAssignmentsReceived RackAssignment[] @relation("RackAssignee")
   rackAssignmentsGiven    RackAssignment[] @relation("RackAssigner")
   productReceivedLogs ProductReceivedLog[]
+  shiftAssignmentsReceived ShiftAssignment[] @relation("ShiftAssignee")
+  shiftAssignmentsGiven    ShiftAssignment[] @relation("ShiftAssigner")
 
   @@unique([tenantId, userId])
   @@unique([tenantId, employeeCode])
@@ -709,6 +713,51 @@ model LeaveApprovalAction {
 
   @@index([leaveRequestId])
   @@map("leave_approval_actions")
+}
+
+// A reusable named shift template ("Morning", "Night") -- start/end are
+// plain "HH:mm" labels in the tenant's own timezone, not UTC instants:
+// nothing here needs to be compared across timezones, only displayed and
+// assigned to a date, so a string is simpler than layering DateTime/date
+// math for no benefit.
+model Shift {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  startTime String
+  endTime   String
+  createdAt DateTime @default(now())
+
+  tenant      Tenant            @relation(fields: [tenantId], references: [id])
+  assignments ShiftAssignment[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("shifts")
+}
+
+// One employee's shift on one date. Unique per (membership, date) --
+// assigning a new shift for a date a person is already scheduled on
+// replaces it (upsert), rather than allowing two shifts the same day.
+model ShiftAssignment {
+  id                     String   @id @default(uuid())
+  tenantId               String
+  membershipId           String
+  shiftId                String
+  date                   DateTime @db.Date
+  assignedByMembershipId String
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  membership TenantMembership @relation("ShiftAssignee", fields: [membershipId], references: [id])
+  shift      Shift            @relation(fields: [shiftId], references: [id])
+  assignedBy TenantMembership @relation("ShiftAssigner", fields: [assignedByMembershipId], references: [id])
+
+  @@unique([membershipId, date])
+  @@index([tenantId])
+  @@index([membershipId, date])
+  @@map("shift_assignments")
 }
 
 // Phase 9 (Extensions): tenant-scoped keys for the read-only external API

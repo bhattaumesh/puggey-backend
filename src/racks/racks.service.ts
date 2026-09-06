@@ -15,10 +15,13 @@ const PENDING_AFTER_DAYS = 30;
 
 type Tx = Prisma.TransactionClient;
 
+// select, not include -- a plain include on membership/assignedBy would
+// also pull baseSalary, photoData (raw image bytes), and other sensitive
+// fields nothing here displays.
 const ASSIGNMENT_INCLUDE = {
   rack: true,
-  membership: { include: { user: { select: { fullName: true, email: true } } } },
-  assignedBy: { include: { user: { select: { fullName: true, email: true } } } },
+  membership: { select: { id: true, user: { select: { fullName: true, email: true } } } },
+  assignedBy: { select: { id: true, user: { select: { fullName: true, email: true } } } },
 } satisfies Prisma.RackAssignmentInclude;
 
 @Injectable()
@@ -95,7 +98,7 @@ export class RacksService {
     const logs = await tx.rackCleaningLog.findMany({
       where: { tenantId: this.ctx.tenantId! },
       orderBy: { cleanedAt: 'desc' },
-      include: { membership: { include: { user: { select: { fullName: true, email: true } } } } },
+      include: { membership: { select: { id: true, user: { select: { fullName: true, email: true } } } } },
     });
     const map = new Map<string, { cleanedAt: Date; cleanedBy: string; remarks: string | null }>();
     for (const log of logs) {
@@ -265,8 +268,8 @@ export class RacksService {
         orderBy: { cleanedAt: 'desc' },
         take: limit,
         include: {
-          membership: { include: { user: { select: { fullName: true, email: true } } } },
-          ratedBy: { include: { user: { select: { fullName: true, email: true } } } },
+          membership: { select: { id: true, user: { select: { fullName: true, email: true } } } },
+          ratedBy: { select: { id: true, user: { select: { fullName: true, email: true } } } },
         },
       });
     });
@@ -279,7 +282,7 @@ export class RacksService {
       const membershipId = await this.myMembershipId(tx);
       const log = await tx.rackCleaningLog.create({
         data: { tenantId: this.ctx.tenantId!, rackId, membershipId, remarks: dto.remarks },
-        include: { membership: { include: { user: { select: { fullName: true, email: true } } } } },
+        include: { membership: { select: { id: true, user: { select: { fullName: true, email: true } } } } },
       });
 
       // Closes out whichever assignment was open for this rack, regardless

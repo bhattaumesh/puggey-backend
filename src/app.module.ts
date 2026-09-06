@@ -25,6 +25,7 @@ import { TasksModule } from './tasks/tasks.module';
 import { RacksModule } from './racks/racks.module';
 import { VendorsModule } from './vendors/vendors.module';
 import { ProductsModule } from './products/products.module';
+import { ShiftsModule } from './shifts/shifts.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { ProductsModule } from './products/products.module';
     RacksModule,
     VendorsModule,
     ProductsModule,
+    ShiftsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
