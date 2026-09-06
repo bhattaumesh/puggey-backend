@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { VendorsService } from './vendors.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { ReceiveProductDto } from './dto/receive-product.dto';
+import { UpdateReceiptProductDto } from './dto/update-receipt-product.dto';
 
 @Controller('vendors')
 @UseGuards(JwtAuthGuard)
@@ -46,8 +47,18 @@ export class VendorsController {
     return this.vendors.list();
   }
 
+  @Get('my-receipts')
+  myReceipts() {
+    return this.vendors.myReceipts();
+  }
+
   @Post(':id/receive')
   receive(@Param('id') id: string, @Body() dto: ReceiveProductDto) {
     return this.vendors.receive(id, dto);
+  }
+
+  @Patch('receipts/:id')
+  updateReceiptProduct(@Param('id') id: string, @Body() dto: UpdateReceiptProductDto) {
+    return this.vendors.updateReceiptProduct(id, dto);
   }
 }

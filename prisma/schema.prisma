@@ -130,6 +130,7 @@ model Tenant {
   rackCleaningLogs     RackCleaningLog[]
   rackAssignments      RackAssignment[]
   vendors              Vendor[]
+  products             Product[]
   productReceivedLogs  ProductReceivedLog[]
 
   @@map("tenants")
@@ -404,6 +405,23 @@ model Vendor {
   @@map("vendors")
 }
 
+// What was actually received -- a reusable tenant-wide tag, same shape as
+// Vendor (just a name), so the same delivery can be tagged consistently
+// across many receipts instead of re-typing a description each time.
+model Product {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  createdAt DateTime @default(now())
+
+  tenant   Tenant               @relation(fields: [tenantId], references: [id])
+  receipts ProductReceivedLog[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("products")
+}
+
 // One row per product-received event. Append-only, same reasoning as
 // RackCleaningLog -- a vendor can supply many separate deliveries, so this
 // is a log/feed (admin's "Recent Product Received"), not a per-vendor
@@ -413,15 +431,21 @@ model ProductReceivedLog {
   tenantId     String
   vendorId     String
   membershipId String
+  // Which product this delivery was -- optional and settable after the
+  // fact (see ProductsController): the employee logging the receipt may
+  // not have decided/known the tag yet, or may need to correct it later.
+  productId    String?
   receivedAt   DateTime @default(now())
   remarks      String?
 
   tenant     Tenant           @relation(fields: [tenantId], references: [id])
   vendor     Vendor           @relation(fields: [vendorId], references: [id])
   membership TenantMembership @relation(fields: [membershipId], references: [id])
+  product    Product?         @relation(fields: [productId], references: [id])
 
   @@index([tenantId])
   @@index([vendorId])
+  @@index([productId])
   @@map("product_received_logs")
 }
 

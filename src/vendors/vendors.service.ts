@@ -1,9 +1,10 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { TenantContextService } from '../common/tenant-context.service';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { ReceiveProductDto } from './dto/receive-product.dto';
+import { UpdateReceiptProductDto } from './dto/update-receipt-product.dto';
 
 const RECENT_LIMIT = 30;
 
@@ -57,10 +58,25 @@ export class VendorsService {
         take: RECENT_LIMIT,
         include: {
           vendor: true,
+          product: true,
           membership: { include: { user: { select: { fullName: true, email: true } } } },
         },
       }),
     );
+  }
+
+  // An employee's own receipts, most recent first -- lets them find one to
+  // correct the product tag on without needing the admin-only /recent feed.
+  async myReceipts(limit = 20) {
+    return this.tenantPrisma.run(async (tx) => {
+      const membershipId = await this.myMembershipId(tx);
+      return tx.productReceivedLog.findMany({
+        where: { membershipId },
+        orderBy: { receivedAt: 'desc' },
+        take: limit,
+        include: { vendor: true, product: true },
+      });
+    });
   }
 
   async history(vendorId: string, limit?: number) {
@@ -71,7 +87,7 @@ export class VendorsService {
         where: { vendorId },
         orderBy: { receivedAt: 'desc' },
         take: limit,
-        include: { membership: { include: { user: { select: { fullName: true, email: true } } } } },
+        include: { product: true, membership: { include: { user: { select: { fullName: true, email: true } } } } },
       });
     });
   }
@@ -80,10 +96,41 @@ export class VendorsService {
     return this.tenantPrisma.run(async (tx) => {
       const vendor = await tx.vendor.findUnique({ where: { id: vendorId } });
       if (!vendor) throw new NotFoundException({ error: 'not_found', message: 'No such vendor.' });
+      if (dto.productId) {
+        const product = await tx.product.findUnique({ where: { id: dto.productId } });
+        if (!product) throw new NotFoundException({ error: 'not_found', message: 'No such product.' });
+      }
       const membershipId = await this.myMembershipId(tx);
       return tx.productReceivedLog.create({
-        data: { tenantId: this.ctx.tenantId!, vendorId, membershipId, remarks: dto.remarks },
-        include: { membership: { include: { user: { select: { fullName: true, email: true } } } } },
+        data: { tenantId: this.ctx.tenantId!, vendorId, membershipId, remarks: dto.remarks, productId: dto.productId },
+        include: { product: true, membership: { include: { user: { select: { fullName: true, email: true } } } } },
+      });
+    });
+  }
+
+  // The employee who logged the receipt can tag or re-tag which product it
+  // was after the fact (they may not have known/decided at the time); an
+  // admin can correct anyone's. Nobody else may touch someone else's log.
+  async updateReceiptProduct(logId: string, dto: UpdateReceiptProductDto) {
+    return this.tenantPrisma.run(async (tx) => {
+      const log = await tx.productReceivedLog.findUnique({ where: { id: logId } });
+      if (!log) throw new NotFoundException({ error: 'not_found', message: 'No such receipt.' });
+      const membershipId = await this.myMembershipId(tx);
+      if (log.membershipId !== membershipId && this.ctx.role !== 'SUPER_ADMIN') {
+        throw new ForbiddenException({ error: 'forbidden', message: 'You can only tag receipts you logged yourself.' });
+      }
+      if (dto.productId) {
+        const product = await tx.product.findUnique({ where: { id: dto.productId } });
+        if (!product) throw new NotFoundException({ error: 'not_found', message: 'No such product.' });
+      }
+      return tx.productReceivedLog.update({
+        where: { id: logId },
+        data: { productId: dto.productId ?? null },
+        include: {
+          vendor: true,
+          product: true,
+          membership: { include: { user: { select: { fullName: true, email: true } } } },
+        },
       });
     });
   }

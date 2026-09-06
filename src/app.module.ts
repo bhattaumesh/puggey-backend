@@ -24,6 +24,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { TasksModule } from './tasks/tasks.module';
 import { RacksModule } from './racks/racks.module';
 import { VendorsModule } from './vendors/vendors.module';
+import { ProductsModule } from './products/products.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { VendorsModule } from './vendors/vendors.module';
     TasksModule,
     RacksModule,
     VendorsModule,
+    ProductsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

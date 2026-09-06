@@ -4,4 +4,8 @@ export class ReceiveProductDto {
   @IsOptional()
   @IsString()
   remarks?: string;
+
+  @IsOptional()
+  @IsString()
+  productId?: string;
 }
