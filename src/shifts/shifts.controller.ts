@@ -31,6 +31,13 @@ export class ShiftsController {
     return this.shifts.updateShift(id, dto);
   }
 
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN')
+  @Delete(':id')
+  deleteShift(@Param('id') id: string) {
+    return this.shifts.deleteShift(id);
+  }
+
   @Get('my-upcoming')
   myUpcoming() {
     return this.shifts.myUpcoming();

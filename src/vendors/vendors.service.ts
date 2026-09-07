@@ -59,7 +59,7 @@ export class VendorsService {
         include: {
           vendor: true,
           product: true,
-          membership: { include: { user: { select: { fullName: true, email: true } } } },
+          membership: { select: { id: true, user: { select: { fullName: true, email: true } } } },
         },
       }),
     );
@@ -87,7 +87,7 @@ export class VendorsService {
         where: { vendorId },
         orderBy: { receivedAt: 'desc' },
         take: limit,
-        include: { product: true, membership: { include: { user: { select: { fullName: true, email: true } } } } },
+        include: { product: true, membership: { select: { id: true, user: { select: { fullName: true, email: true } } } } },
       });
     });
   }
@@ -102,8 +102,8 @@ export class VendorsService {
       }
       const membershipId = await this.myMembershipId(tx);
       return tx.productReceivedLog.create({
-        data: { tenantId: this.ctx.tenantId!, vendorId, membershipId, remarks: dto.remarks, productId: dto.productId },
-        include: { product: true, membership: { include: { user: { select: { fullName: true, email: true } } } } },
+        data: { tenantId: this.ctx.tenantId!, vendorId, membershipId, remarks: dto.remarks, productId: dto.productId, billNumber: dto.billNumber },
+        include: { product: true, membership: { select: { id: true, user: { select: { fullName: true, email: true } } } } },
       });
     });
   }
@@ -129,7 +129,7 @@ export class VendorsService {
         include: {
           vendor: true,
           product: true,
-          membership: { include: { user: { select: { fullName: true, email: true } } } },
+          membership: { select: { id: true, user: { select: { fullName: true, email: true } } } },
         },
       });
     });

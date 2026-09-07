@@ -91,6 +91,25 @@ export class ShiftsService {
     return this.tenantPrisma.run((tx) => tx.shift.findMany({ orderBy: { startTime: 'asc' } }));
   }
 
+  // Blocks rather than cascades -- a shift with existing assignments (people
+  // actually scheduled onto it) needs those moved elsewhere first, deliberately,
+  // rather than silently vanishing off the calendar out from under them.
+  async deleteShift(shiftId: string) {
+    return this.tenantPrisma.run(async (tx) => {
+      const shift = await tx.shift.findUnique({ where: { id: shiftId } });
+      if (!shift) throw new NotFoundException({ error: 'not_found', message: 'No such shift.' });
+      const inUse = await tx.shiftAssignment.count({ where: { shiftId } });
+      if (inUse > 0) {
+        throw new ConflictException({
+          error: 'shift_in_use',
+          message: `${inUse} ${inUse === 1 ? 'person is' : 'people are'} still scheduled on this shift. Reassign them first, then remove it.`,
+        });
+      }
+      await tx.shift.delete({ where: { id: shiftId } });
+      return { ok: true };
+    });
+  }
+
   // Admin sees the whole company's calendar; a supervisor sees their own
   // subtree's -- same scoping rule as My Team, not the leave-approval chain.
   async calendar(start: string, end: string) {

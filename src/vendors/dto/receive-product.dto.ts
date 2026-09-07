@@ -8,4 +8,8 @@ export class ReceiveProductDto {
   @IsOptional()
   @IsString()
   productId?: string;
+
+  @IsOptional()
+  @IsString()
+  billNumber?: string;
 }

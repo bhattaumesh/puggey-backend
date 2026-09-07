@@ -451,6 +451,10 @@ model ProductReceivedLog {
   productId    String?
   receivedAt   DateTime @default(now())
   remarks      String?
+  // The vendor's bill/invoice number this delivery came with, if any --
+  // free text, entered at receipt time, not a foreign key to Bill: the
+  // matching bill may be entered separately, later, by someone else.
+  billNumber   String?
 
   tenant     Tenant           @relation(fields: [tenantId], references: [id])
   vendor     Vendor           @relation(fields: [vendorId], references: [id])
