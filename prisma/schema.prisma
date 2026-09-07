@@ -981,6 +981,7 @@ model AdvanceRecovery {
 }
 
 enum BillStatus {
+  draft
   pending
   paid
 }
@@ -989,14 +990,22 @@ enum BillStatus {
 // ProductReceivedLog -- receiving goods and owing money for them are
 // different events (a bill can arrive before, with, or after the goods,
 // and paying it is a separate decision from logging the delivery).
+//
+// A bill can also start life as a "draft": VendorsService.receive() creates
+// one automatically whenever a product is received with a bill number
+// attached, since that's the moment the store learns a bill exists, well
+// before anyone has the amount or date to enter it properly. amount/billDate
+// stay null until someone fills them in via BillsService.markEntered(),
+// which flips status draft -> pending -- the same "awaiting payment" state
+// a manually-created bill starts in.
 model Bill {
   id                 String     @id @default(uuid())
   tenantId           String
   vendorId           String?
   membershipId       String
   billNumber         String?
-  amount             Decimal    @db.Decimal(12, 2)
-  billDate           DateTime
+  amount             Decimal?   @db.Decimal(12, 2)
+  billDate           DateTime?
   status             BillStatus @default(pending)
   paidAt             DateTime?
   paidByMembershipId String?

@@ -101,10 +101,35 @@ export class VendorsService {
         if (!product) throw new NotFoundException({ error: 'not_found', message: 'No such product.' });
       }
       const membershipId = await this.myMembershipId(tx);
-      return tx.productReceivedLog.create({
+      const log = await tx.productReceivedLog.create({
         data: { tenantId: this.ctx.tenantId!, vendorId, membershipId, remarks: dto.remarks, productId: dto.productId, billNumber: dto.billNumber },
         include: { product: true, membership: { select: { id: true, user: { select: { fullName: true, email: true } } } } },
       });
+
+      // A bill number on the delivery means there's a bill to account for --
+      // drop it straight into Bills Pending as a draft (no amount/date yet)
+      // rather than making someone remember to enter it separately later.
+      // Skipped if an unpaid bill for this vendor+number already exists, so
+      // tagging several items from the same delivery doesn't create duplicates.
+      if (dto.billNumber) {
+        const existing = await tx.bill.findFirst({
+          where: { vendorId, billNumber: dto.billNumber, status: { not: 'paid' } },
+        });
+        if (!existing) {
+          await tx.bill.create({
+            data: {
+              tenantId: this.ctx.tenantId!,
+              vendorId,
+              membershipId,
+              billNumber: dto.billNumber,
+              remarks: dto.remarks,
+              status: 'draft',
+            },
+          });
+        }
+      }
+
+      return log;
     });
   }
 
