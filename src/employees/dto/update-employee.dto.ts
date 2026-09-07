@@ -1,4 +1,4 @@
-import { IsDateString, IsNumber, IsOptional, IsString, IsUUID, IsUrl, Min, MinLength, ValidateIf } from 'class-validator';
+import { IsDateString, IsEmail, IsNumber, IsOptional, IsString, IsUUID, IsUrl, Min, MinLength, ValidateIf } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
@@ -14,6 +14,15 @@ export class UpdateEmployeeDto {
   @IsString()
   @MinLength(1)
   fullName?: string;
+
+  // Same "don't validate/clear on empty" pattern -- an empty string never
+  // clears the login email (there's always one), it just means "unchanged"
+  // here. Uniqueness against other accounts is checked in the service,
+  // where the current user's own row can be excluded.
+  @IsOptional()
+  @ValidateIf((o) => !!o.email)
+  @IsEmail()
+  email?: string;
 
   @IsOptional()
   @IsString()

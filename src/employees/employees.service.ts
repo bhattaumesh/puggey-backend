@@ -183,17 +183,31 @@ export class EmployeesService {
         throw new ConflictException({ error: 'circular_report', message: 'An employee cannot report to themselves.' });
       }
 
-      if (dto.fullName) {
-        await tx.user.update({ where: { id: existing.userId }, data: { fullName: dto.fullName, phone: dto.phone } });
-      } else if (dto.phone !== undefined) {
-        await tx.user.update({ where: { id: existing.userId }, data: { phone: dto.phone } });
+      if (dto.email) {
+        const conflict = await tx.user.findUnique({ where: { email: dto.email } });
+        if (conflict && conflict.id !== existing.userId) {
+          throw new ConflictException({ error: 'email_taken', message: 'That email is already used by another account.' });
+        }
+      }
+
+      const userUpdate: { fullName?: string; phone?: string; email?: string } = {};
+      if (dto.fullName) userUpdate.fullName = dto.fullName;
+      if (dto.phone !== undefined) userUpdate.phone = dto.phone;
+      if (dto.email) userUpdate.email = dto.email;
+      if (Object.keys(userUpdate).length > 0) {
+        await tx.user.update({ where: { id: existing.userId }, data: userUpdate });
       }
 
       return tx.tenantMembership.update({
         where: { id },
         data: {
           designation: dto.designation,
-          employeeCode: dto.employeeCode,
+          // '' -> null, never a stored empty string: the edit form always
+          // sends the current value including '' when no code is set, and
+          // (tenantId, employeeCode) is uniquely constrained -- Postgres
+          // treats multiple NULLs as distinct but would reject a second
+          // employee saving '' once one already has it.
+          employeeCode: dto.employeeCode === '' ? null : dto.employeeCode,
           photoUrl: dto.photoUrl,
           departmentId: dto.departmentId,
           supervisorMembershipId: dto.supervisorMembershipId,

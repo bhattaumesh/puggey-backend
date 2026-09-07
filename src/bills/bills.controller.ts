@@ -25,8 +25,8 @@ export class BillsController {
     return this.bills.mine();
   }
 
-  @UseGuards(RolesGuard)
-  @Roles('SUPER_ADMIN')
+  // Every bill entered, any status -- open to any employee (see Command:
+  // Bills should be an everyday, not admin-only, screen).
   @Get('recent')
   recent() {
     return this.bills.recent();

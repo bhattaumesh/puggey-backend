@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ShiftsService } from './shifts.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { CreateShiftDto } from './dto/create-shift.dto';
+import { UpdateShiftDto } from './dto/update-shift.dto';
 import { AssignShiftDto } from './dto/assign-shift.dto';
 
 @Controller('shifts')
@@ -21,6 +22,13 @@ export class ShiftsController {
   @Get()
   listShifts() {
     return this.shifts.listShifts();
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN')
+  @Patch(':id')
+  updateShift(@Param('id') id: string, @Body() dto: UpdateShiftDto) {
+    return this.shifts.updateShift(id, dto);
   }
 
   @Get('my-upcoming')

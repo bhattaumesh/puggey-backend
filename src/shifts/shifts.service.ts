@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { TenantContextService } from '../common/tenant-context.service';
 import { CreateShiftDto } from './dto/create-shift.dto';
+import { UpdateShiftDto } from './dto/update-shift.dto';
 import { AssignShiftDto } from './dto/assign-shift.dto';
 
 type Tx = Prisma.TransactionClient;
@@ -67,6 +68,21 @@ export class ShiftsService {
       if (existing) throw new ConflictException({ error: 'shift_exists', message: 'A shift with that name already exists.' });
       return tx.shift.create({
         data: { tenantId: this.ctx.tenantId!, name: dto.name, startTime: dto.startTime, endTime: dto.endTime },
+      });
+    });
+  }
+
+  async updateShift(shiftId: string, dto: UpdateShiftDto) {
+    return this.tenantPrisma.run(async (tx) => {
+      const shift = await tx.shift.findUnique({ where: { id: shiftId } });
+      if (!shift) throw new NotFoundException({ error: 'not_found', message: 'No such shift.' });
+      if (dto.name && dto.name !== shift.name) {
+        const clash = await tx.shift.findFirst({ where: { name: dto.name } });
+        if (clash) throw new ConflictException({ error: 'shift_exists', message: 'A shift with that name already exists.' });
+      }
+      return tx.shift.update({
+        where: { id: shiftId },
+        data: { name: dto.name, startTime: dto.startTime, endTime: dto.endTime },
       });
     });
   }
