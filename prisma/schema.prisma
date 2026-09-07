@@ -1065,6 +1065,7 @@ model CounterSession {
 enum CashMovementType {
   inflow
   outflow
+  sales
 }
 
 // A cash-in/cash-out event during an open counter session (a bank drop, a

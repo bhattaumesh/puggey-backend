@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { CountersService } from './counters.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -25,6 +26,11 @@ export class CountersController {
     return this.counters.listCounters();
   }
 
+  @Get('overview')
+  overview() {
+    return this.counters.overview();
+  }
+
   @Get('my-active-session')
   myActiveSession() {
     return this.counters.myActiveSession();
@@ -35,8 +41,9 @@ export class CountersController {
     return this.counters.sessionsForMembership(membershipId);
   }
 
-  @UseGuards(RolesGuard)
-  @Roles('SUPER_ADMIN', 'SUPERVISOR')
+  // Open to every role -- lets an employee "assign themselves" a counter.
+  // assertCanAssign() in the service enforces the actual boundary: yourself,
+  // always; someone else, only if you're an admin or their supervisor.
   @Post('sessions')
   openSession(@Body() dto: OpenCounterSessionDto) {
     return this.counters.openSession(dto);
@@ -55,5 +62,15 @@ export class CountersController {
   @Get('sessions/:id/report')
   report(@Param('id') id: string) {
     return this.counters.report(id);
+  }
+
+  @Get('sessions/:id/report/pdf')
+  async reportPdf(@Param('id') id: string, @Query('download') download: string | undefined, @Res() res: Response) {
+    const buffer = await this.counters.getReportPdf(id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `${download ? 'attachment' : 'inline'}; filename="counter-report-${id}.pdf"`,
+    });
+    res.send(buffer);
   }
 }

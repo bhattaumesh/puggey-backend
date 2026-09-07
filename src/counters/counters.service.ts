@@ -6,6 +6,7 @@ import { CreateCounterDto } from './dto/create-counter.dto';
 import { OpenCounterSessionDto } from './dto/open-session.dto';
 import { CloseCounterSessionDto } from './dto/close-session.dto';
 import { AddCashMovementDto } from './dto/add-cash-movement.dto';
+import { renderCounterReportPdf } from './counter-report-pdf.util';
 
 type Tx = Prisma.TransactionClient;
 
@@ -49,12 +50,14 @@ export class CountersService {
     return rows.map((r) => r.id);
   }
 
-  // Assigning a counter (opening a session for someone else) follows the
-  // same authority boundary as shift assignment and rack assignment.
+  // Assigning a counter (opening a session) is allowed for yourself -- "Assign
+  // yourself" -- by any role, or for someone else if you're an admin/supervisor
+  // with authority over them. Same authority boundary as shift/rack assignment.
   private async assertCanAssign(tx: Tx, targetMembershipId: string) {
+    const myId = await this.myMembershipId(tx);
+    if (myId === targetMembershipId) return;
     if (this.ctx.role === 'SUPER_ADMIN') return;
     if (this.ctx.role === 'SUPERVISOR') {
-      const myId = await this.myMembershipId(tx);
       const subtreeIds = await this.getReportSubtreeIds(tx, myId);
       if (subtreeIds.includes(targetMembershipId)) return;
       throw new ForbiddenException({ error: 'not_authorized', message: 'You can only assign a counter to your own team.' });
@@ -103,6 +106,20 @@ export class CountersService {
 
   listCounters() {
     return this.tenantPrisma.run((tx) => tx.counter.findMany({ orderBy: { name: 'asc' } }));
+  }
+
+  // "Who is assigned to the counter" -- every counter, paired with whoever
+  // currently has it open (if anyone), for an at-a-glance overview.
+  async overview() {
+    return this.tenantPrisma.run(async (tx) => {
+      const counters = await tx.counter.findMany({ orderBy: { name: 'asc' } });
+      const openSessions = await tx.counterSession.findMany({
+        where: { status: 'open' },
+        include: { membership: { select: { id: true, user: { select: { fullName: true, email: true } } } } },
+      });
+      const byCounter = new Map(openSessions.map((s) => [s.counterId, s]));
+      return counters.map((counter) => ({ counter, activeSession: byCounter.get(counter.id) ?? null }));
+    });
   }
 
   async openSession(dto: OpenCounterSessionDto) {
@@ -187,8 +204,8 @@ export class CountersService {
     });
   }
 
-  // Reconciles opening cash + inflow - outflow (expected) against what was
-  // actually counted at close (actual) -- the whole point of tracking
+  // Reconciles opening cash + inflow + sales - outflow (expected) against what
+  // was actually counted at close (actual) -- the whole point of tracking
   // denominations in the first place. Available before close too, so
   // whoever's handling the till can sanity-check as they go.
   async report(sessionId: string) {
@@ -196,23 +213,57 @@ export class CountersService {
       const session = await tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: true } });
       if (!session) throw new NotFoundException({ error: 'not_found', message: 'No such counter session.' });
       await this.assertCanHandle(tx, session.membershipId);
+      return this.buildReport(session);
+    });
+  }
 
-      const totalInflow = session.movements.filter((m) => m.type === 'inflow').reduce((sum, m) => sum + Number(m.amount), 0);
-      const totalOutflow = session.movements.filter((m) => m.type === 'outflow').reduce((sum, m) => sum + Number(m.amount), 0);
-      const openingCash = Number(session.openingCash);
-      const expectedClosing = openingCash + totalInflow - totalOutflow;
-      const actualClosing = session.closingCash != null ? Number(session.closingCash) : null;
-      const variance = actualClosing != null ? actualClosing - expectedClosing : null;
+  private buildReport(session: Prisma.CounterSessionGetPayload<{ include: typeof SESSION_INCLUDE & { movements: true } }>) {
+    const totalInflow = session.movements.filter((m) => m.type === 'inflow').reduce((sum, m) => sum + Number(m.amount), 0);
+    const totalOutflow = session.movements.filter((m) => m.type === 'outflow').reduce((sum, m) => sum + Number(m.amount), 0);
+    const totalSales = session.movements.filter((m) => m.type === 'sales').reduce((sum, m) => sum + Number(m.amount), 0);
+    const openingCash = Number(session.openingCash);
+    const expectedClosing = openingCash + totalInflow + totalSales - totalOutflow;
+    const actualClosing = session.closingCash != null ? Number(session.closingCash) : null;
+    const variance = actualClosing != null ? actualClosing - expectedClosing : null;
 
-      return {
-        session,
-        openingCash,
-        totalInflow,
-        totalOutflow,
-        expectedClosing,
-        actualClosing,
-        variance,
-      };
+    return {
+      session,
+      openingCash,
+      totalInflow,
+      totalOutflow,
+      totalSales,
+      expectedClosing,
+      actualClosing,
+      variance,
+    };
+  }
+
+  async getReportPdf(sessionId: string): Promise<Buffer> {
+    const { report, tenant } = await this.tenantPrisma.run(async (tx) => {
+      const session = await tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: true } });
+      if (!session) throw new NotFoundException({ error: 'not_found', message: 'No such counter session.' });
+      await this.assertCanHandle(tx, session.membershipId);
+      const tenantRow = await tx.tenant.findUnique({ where: { id: this.ctx.tenantId! } });
+      return { report: this.buildReport(session), tenant: tenantRow };
+    });
+
+    return renderCounterReportPdf({
+      tenantName: tenant?.name ?? 'Puggey',
+      counterName: report.session.counter.name,
+      employeeName: report.session.membership.user.fullName || report.session.membership.user.email,
+      assignedByName: report.session.assignedBy.user.fullName || report.session.assignedBy.user.email,
+      openedAt: report.session.openedAt,
+      closedAt: report.session.closedAt,
+      openingCash: report.openingCash,
+      openingDenominations: report.session.openingDenominations as Record<string, number>,
+      closingCash: report.actualClosing,
+      closingDenominations: report.session.closingDenominations as Record<string, number> | null,
+      totalInflow: report.totalInflow,
+      totalOutflow: report.totalOutflow,
+      totalSales: report.totalSales,
+      expectedClosing: report.expectedClosing,
+      variance: report.variance,
+      generatedAt: new Date(),
     });
   }
 }

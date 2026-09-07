@@ -1,8 +1,8 @@
 import { IsIn, IsNumber, IsPositive, IsString, MinLength } from 'class-validator';
 
 export class AddCashMovementDto {
-  @IsIn(['inflow', 'outflow'])
-  type!: 'inflow' | 'outflow';
+  @IsIn(['inflow', 'outflow', 'sales'])
+  type!: 'inflow' | 'outflow' | 'sales';
 
   @IsNumber()
   @IsPositive()
