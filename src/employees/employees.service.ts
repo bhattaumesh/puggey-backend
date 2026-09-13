@@ -165,6 +165,78 @@ export class EmployeesService {
     return canSeeSensitive ? withPhoto : this.redact(withPhoto);
   }
 
+  // A merged, most-recent-first feed of work an employee has actually done --
+  // assembled from the separate silos that each track it (rack cleaning,
+  // counter handling, completed tasks), since there's no single unified
+  // "work item" table. Same visibility rule as viewing the profile itself.
+  async recentWork(membershipId: string, limit = 15) {
+    const scope = myTeamScope(this.ctx.role ?? 'EMPLOYEE');
+
+    return this.tenantPrisma.run(async (tx) => {
+      const myId = await this.myMembershipId(tx);
+      const isSelf = myId === membershipId;
+      if (scope === 'none' && !isSelf) {
+        throw new ForbiddenException({ error: 'not_authorized', message: 'You do not have access to this profile.' });
+      }
+      if (scope === 'subtree' && !isSelf) {
+        const subtreeIds = myId ? await this.getReportSubtreeIds(tx, myId) : [];
+        if (!subtreeIds.includes(membershipId)) {
+          throw new ForbiddenException({ error: 'not_authorized', message: 'You do not have access to this profile.' });
+        }
+      }
+
+      const [rackLogs, counterSessions, tasks] = await Promise.all([
+        tx.rackCleaningLog.findMany({
+          where: { membershipId },
+          orderBy: { cleanedAt: 'desc' },
+          take: limit,
+          include: { rack: { select: { name: true } } },
+        }),
+        tx.counterSession.findMany({
+          where: { membershipId, status: 'closed' },
+          orderBy: { closedAt: 'desc' },
+          take: limit,
+          include: { counter: { select: { name: true } } },
+        }),
+        tx.task.findMany({
+          where: { membershipId, status: 'completed' },
+          orderBy: { updatedAt: 'desc' },
+          take: limit,
+        }),
+      ]);
+
+      const items = [
+        ...rackLogs.map((l) => ({
+          kind: 'rack' as const,
+          id: l.id,
+          title: `Cleaned ${l.rack.name}`,
+          date: l.cleanedAt,
+          rating: l.qualityRating,
+          status: l.qualityRating != null ? ('rated' as const) : ('unrated' as const),
+        })),
+        ...counterSessions.map((s) => ({
+          kind: 'counter' as const,
+          id: s.id,
+          title: `Handled ${s.counter.name}`,
+          date: s.closedAt!,
+          rating: s.workRating,
+          status: s.verifiedAt ? ('verified' as const) : ('pending_verification' as const),
+        })),
+        ...tasks.map((t) => ({
+          kind: 'task' as const,
+          id: t.id,
+          title: t.title,
+          date: t.updatedAt,
+          rating: null as number | null,
+          status: 'completed' as const,
+        })),
+      ];
+
+      items.sort((a, b) => b.date.getTime() - a.date.getTime());
+      return items.slice(0, limit);
+    });
+  }
+
   async me() {
     const found = await this.tenantPrisma.run(async (tx) => {
       const myId = await this.myMembershipId(tx);

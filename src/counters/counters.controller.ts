@@ -8,6 +8,8 @@ import { CreateCounterDto } from './dto/create-counter.dto';
 import { OpenCounterSessionDto } from './dto/open-session.dto';
 import { CloseCounterSessionDto } from './dto/close-session.dto';
 import { AddCashMovementDto } from './dto/add-cash-movement.dto';
+import { VerifyCounterSessionDto } from './dto/verify-session.dto';
+import { EditClosingDetailsDto } from './dto/edit-closing-details.dto';
 
 @Controller('counters')
 @UseGuards(JwtAuthGuard)
@@ -62,6 +64,18 @@ export class CountersController {
   @Patch('sessions/:id/close')
   closeSession(@Param('id') id: string, @Body() dto: CloseCounterSessionDto) {
     return this.counters.closeSession(id, dto);
+  }
+
+  @Patch('sessions/:id/closing-details')
+  editClosingDetails(@Param('id') id: string, @Body() dto: EditClosingDetailsDto) {
+    return this.counters.editClosingDetails(id, dto);
+  }
+
+  // Open to every role, like openSession -- the real boundary (anyone but
+  // the person who handled the till) is enforced in verifySession().
+  @Patch('sessions/:id/verify')
+  verifySession(@Param('id') id: string, @Body() dto: VerifyCounterSessionDto) {
+    return this.counters.verifySession(id, dto);
   }
 
   @Get('sessions/:id/report')

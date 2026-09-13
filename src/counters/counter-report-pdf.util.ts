@@ -20,6 +20,11 @@ export interface CounterReportPdfInput {
   totalSales: number;
   expectedClosing: number;
   variance: number | null;
+  movements: { type: 'inflow' | 'outflow' | 'sales'; amount: number; reason: string; createdAt: Date }[];
+  verificationStatus: 'pending' | 'verified' | null;
+  verifiedByName: string | null;
+  verifiedAt: Date | null;
+  workRating: number | null;
   generatedAt: Date;
 }
 
@@ -91,6 +96,24 @@ export function renderCounterReportPdf(input: CounterReportPdfInput): Promise<Bu
     row('Inflow', input.totalInflow);
     row('Outflow', -input.totalOutflow || 0); // avoid a "-0.00" display when there's no outflow
 
+    const cashMovements = input.movements.filter((m) => m.type === 'inflow' || m.type === 'outflow');
+    if (cashMovements.length > 0) {
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#000000').text('Cash movements', 50, y);
+      y += 14;
+      for (const m of cashMovements) {
+        doc
+          .fontSize(8)
+          .font('Helvetica')
+          .fillColor('#666666')
+          .text(`${m.type === 'inflow' ? 'In' : 'Out'} · ${money(Number(m.amount))} · ${m.reason} · ${m.createdAt.toLocaleString()}`, 50, y, {
+            width: 495,
+          });
+        doc.fillColor('#000000');
+        y += 13;
+      }
+      y += 4;
+    }
+
     doc.moveTo(50, y).lineTo(545, y).stroke();
     y += 10;
     row('Expected closing balance', input.expectedClosing, { bold: true });
@@ -109,6 +132,24 @@ export function renderCounterReportPdf(input: CounterReportPdfInput): Promise<Bu
         const varianceColor = input.variance < 0 ? '#a8231a' : input.variance > 0 ? '#b8860b' : '#2e7d32';
         row('Variance', input.variance, { bold: true, color: varianceColor });
       }
+    }
+
+    if (input.verificationStatus) {
+      y += 4;
+      const verified = input.verificationStatus === 'verified';
+      doc
+        .fontSize(10)
+        .font('Helvetica-Bold')
+        .fillColor(verified ? '#2e7d32' : '#b8860b')
+        .text(
+          verified && input.verifiedByName && input.verifiedAt
+            ? `Verified by ${input.verifiedByName} on ${input.verifiedAt.toLocaleString()}${input.workRating ? ` · Work rating ${input.workRating}/5` : ''}`
+            : 'Pending verification',
+          50,
+          y,
+        );
+      doc.fillColor('#000000');
+      y += 20;
     }
 
     y += 10;

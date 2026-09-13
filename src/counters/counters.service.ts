@@ -6,6 +6,8 @@ import { CreateCounterDto } from './dto/create-counter.dto';
 import { OpenCounterSessionDto } from './dto/open-session.dto';
 import { CloseCounterSessionDto } from './dto/close-session.dto';
 import { AddCashMovementDto } from './dto/add-cash-movement.dto';
+import { VerifyCounterSessionDto } from './dto/verify-session.dto';
+import { EditClosingDetailsDto } from './dto/edit-closing-details.dto';
 import { renderCounterReportPdf } from './counter-report-pdf.util';
 
 type Tx = Prisma.TransactionClient;
@@ -14,6 +16,7 @@ const SESSION_INCLUDE = {
   counter: true,
   membership: { select: { id: true, user: { select: { fullName: true, email: true } } } },
   assignedBy: { select: { id: true, user: { select: { fullName: true, email: true } } } },
+  verifiedBy: { select: { id: true, user: { select: { fullName: true, email: true } } } },
 } satisfies Prisma.CounterSessionInclude;
 
 // Standard Nepali Rupee note/coin values -- the frontend uses this same list
@@ -65,9 +68,9 @@ export class CountersService {
     throw new ForbiddenException({ error: 'not_authorized', message: 'You are not allowed to assign counters.' });
   }
 
-  // Working the till itself (logging a movement, closing it out, viewing its
-  // report) is open to the person actually handling it, plus whoever could
-  // have assigned it in the first place.
+  // Working the till itself (logging a movement, closing it out, editing its
+  // closing details) is open to the person actually handling it, plus
+  // whoever could have assigned it in the first place.
   private async assertCanHandle(tx: Tx, sessionMembershipId: string) {
     const myId = await this.myMembershipId(tx);
     if (myId === sessionMembershipId) return;
@@ -77,6 +80,15 @@ export class CountersService {
       if (subtreeIds.includes(sessionMembershipId)) return;
     }
     throw new ForbiddenException({ error: 'not_authorized', message: 'You do not have access to this counter session.' });
+  }
+
+  // Viewing a report is looser than handling: a closed session's report is
+  // readable by anyone on the tenant, since peer verification requires
+  // being able to see the figures before signing off on them. An open
+  // session's running total stays as handle-restricted as before.
+  private async assertCanView(tx: Tx, session: { membershipId: string; status: string }) {
+    if (session.status === 'closed') return;
+    await this.assertCanHandle(tx, session.membershipId);
   }
 
   // Trusts nothing about the shape of the incoming map: every key must be a
@@ -226,6 +238,51 @@ export class CountersService {
     });
   }
 
+  // Corrects a mistyped closing count/sale after the fact -- same authority
+  // as closing it in the first place. Locked out once a peer has verified
+  // the session, so a verified report can't quietly change underneath the
+  // verification.
+  async editClosingDetails(sessionId: string, dto: EditClosingDetailsDto) {
+    return this.tenantPrisma.run(async (tx) => {
+      const session = await tx.counterSession.findUnique({ where: { id: sessionId } });
+      if (!session) throw new NotFoundException({ error: 'not_found', message: 'No such counter session.' });
+      if (session.status !== 'closed') throw new BadRequestException({ error: 'session_open', message: 'This counter session is not closed yet.' });
+      if (session.verifiedAt) throw new BadRequestException({ error: 'already_verified', message: 'This session has already been verified and can no longer be edited.' });
+      await this.assertCanHandle(tx, session.membershipId);
+      const closingCash = this.validateDenominations(dto.closingDenominations);
+
+      return tx.counterSession.update({
+        where: { id: sessionId },
+        data: { closingCash, closingDenominations: dto.closingDenominations, closingSale: dto.closingSale },
+        include: SESSION_INCLUDE,
+      });
+    });
+  }
+
+  // Peer verification: any tenant member other than whoever handled the
+  // till can double-check a closed session and mark it verified, optionally
+  // scoring the work done -- mirrors RacksService.rateCleaning's "the rater
+  // is never the doer" rule, but open to any employee rather than just
+  // supervisors/admins, per how this tenant wants tills cross-checked.
+  async verifySession(sessionId: string, dto: VerifyCounterSessionDto) {
+    return this.tenantPrisma.run(async (tx) => {
+      const session = await tx.counterSession.findUnique({ where: { id: sessionId } });
+      if (!session) throw new NotFoundException({ error: 'not_found', message: 'No such counter session.' });
+      if (session.status !== 'closed') throw new BadRequestException({ error: 'session_open', message: 'This counter session is not closed yet.' });
+      if (session.verifiedAt) throw new ConflictException({ error: 'already_verified', message: 'This session has already been verified.' });
+      const myId = await this.myMembershipId(tx);
+      if (myId === session.membershipId) {
+        throw new ForbiddenException({ error: 'not_authorized', message: 'You cannot verify your own counter session.' });
+      }
+
+      return tx.counterSession.update({
+        where: { id: sessionId },
+        data: { verifiedByMembershipId: myId, verifiedAt: new Date(), workRating: dto.workRating ?? null },
+        include: SESSION_INCLUDE,
+      });
+    });
+  }
+
   // Reconciles opening cash + inflow + sales - outflow (expected) against what
   // was actually counted at close (actual) -- the whole point of tracking
   // denominations in the first place. Available before close too, so
@@ -234,7 +291,7 @@ export class CountersService {
     return this.tenantPrisma.run(async (tx) => {
       const session = await tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: true } });
       if (!session) throw new NotFoundException({ error: 'not_found', message: 'No such counter session.' });
-      await this.assertCanHandle(tx, session.membershipId);
+      await this.assertCanView(tx, session);
       return this.buildReport(session);
     });
   }
@@ -255,6 +312,7 @@ export class CountersService {
     const actualClosing = session.closingCash != null ? Number(session.closingCash) : null;
     const variance = actualClosing != null ? actualClosing - expectedClosing : null;
     const varianceStatus: 'low' | 'high' | 'exact' | null = variance == null ? null : variance < 0 ? 'low' : variance > 0 ? 'high' : 'exact';
+    const verificationStatus: 'pending' | 'verified' | null = session.status !== 'closed' ? null : session.verifiedAt ? 'verified' : 'pending';
 
     return {
       session,
@@ -268,6 +326,7 @@ export class CountersService {
       actualClosing,
       variance,
       varianceStatus,
+      verificationStatus,
     };
   }
 
@@ -275,7 +334,7 @@ export class CountersService {
     const { report, tenant } = await this.tenantPrisma.run(async (tx) => {
       const session = await tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: true } });
       if (!session) throw new NotFoundException({ error: 'not_found', message: 'No such counter session.' });
-      await this.assertCanHandle(tx, session.membershipId);
+      await this.assertCanView(tx, session);
       const tenantRow = await tx.tenant.findUnique({ where: { id: this.ctx.tenantId! } });
       return { report: this.buildReport(session), tenant: tenantRow };
     });
@@ -298,6 +357,11 @@ export class CountersService {
       totalSales: report.totalSales,
       expectedClosing: report.expectedClosing,
       variance: report.variance,
+      movements: report.session.movements.map((m) => ({ type: m.type, amount: Number(m.amount), reason: m.reason, createdAt: m.createdAt })),
+      verificationStatus: report.verificationStatus,
+      verifiedByName: report.session.verifiedBy ? report.session.verifiedBy.user.fullName || report.session.verifiedBy.user.email : null,
+      verifiedAt: report.session.verifiedAt,
+      workRating: report.session.workRating,
       generatedAt: new Date(),
     });
   }

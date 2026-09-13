@@ -292,6 +292,7 @@ model TenantMembership {
   billsMarkedPaid          Bill[]            @relation("BillPaidBy")
   counterSessionsHandled   CounterSession[]  @relation("CounterHandler")
   counterSessionsAssigned  CounterSession[]  @relation("CounterAssigner")
+  counterSessionsVerified  CounterSession[]  @relation("CounterVerifier")
   counterCashMovements     CounterCashMovement[]
 
   @@unique([tenantId, userId])
@@ -1084,6 +1085,12 @@ model CounterSession {
   closingCash            Decimal?             @db.Decimal(12, 2)
   closingDenominations   Json?
   closingSale            Decimal?             @db.Decimal(12, 2)
+  // Peer verification: any other employee (never the handler themselves)
+  // can double-check a closed till and mark it verified, optionally scoring
+  // the work -- until then the closing report reads "Pending verification".
+  verifiedByMembershipId String?
+  verifiedAt             DateTime?
+  workRating             Int?
   openedAt               DateTime             @default(now())
   closedAt               DateTime?
   createdAt              DateTime             @default(now())
@@ -1093,6 +1100,7 @@ model CounterSession {
   counter    Counter               @relation(fields: [counterId], references: [id])
   membership TenantMembership      @relation("CounterHandler", fields: [membershipId], references: [id])
   assignedBy TenantMembership      @relation("CounterAssigner", fields: [assignedByMembershipId], references: [id])
+  verifiedBy TenantMembership?     @relation("CounterVerifier", fields: [verifiedByMembershipId], references: [id])
   movements  CounterCashMovement[]
 
   @@index([tenantId])

@@ -32,6 +32,11 @@ export class EmployeesController {
     return this.employees.findOne(id);
   }
 
+  @Get('employees/:id/recent-work')
+  recentWork(@Param('id') id: string) {
+    return this.employees.recentWork(id);
+  }
+
   @UseGuards(RolesGuard)
   @Roles('SUPER_ADMIN')
   @Post('employees')
