@@ -142,6 +142,7 @@ export class CountersService {
           assignedByMembershipId,
           openingCash,
           openingDenominations: dto.openingDenominations,
+          previousSale: dto.previousSale,
         },
         include: SESSION_INCLUDE,
       });
@@ -164,6 +165,21 @@ export class CountersService {
         include: { ...SESSION_INCLUDE, movements: true },
       });
     });
+  }
+
+  // Tenant-wide "who recently staffed a counter" history, most recently
+  // closed first -- the counterpart to overview()'s "who's on a counter right
+  // now". Same permissiveness as overview() (any authenticated tenant member
+  // can see it); the frontend only surfaces it in the admin view.
+  async recentSessions(limit: number) {
+    return this.tenantPrisma.run((tx) =>
+      tx.counterSession.findMany({
+        where: { status: 'closed' },
+        orderBy: { closedAt: 'desc' },
+        take: Math.min(Math.max(limit, 1), 100),
+        include: SESSION_INCLUDE,
+      }),
+    );
   }
 
   async addMovement(sessionId: string, dto: AddCashMovementDto) {
@@ -198,7 +214,13 @@ export class CountersService {
 
       return tx.counterSession.update({
         where: { id: sessionId },
-        data: { status: 'closed', closingCash, closingDenominations: dto.closingDenominations, closedAt: new Date() },
+        data: {
+          status: 'closed',
+          closingCash,
+          closingDenominations: dto.closingDenominations,
+          closingSale: dto.closingSale,
+          closedAt: new Date(),
+        },
         include: SESSION_INCLUDE,
       });
     });
@@ -217,24 +239,35 @@ export class CountersService {
     });
   }
 
+  // Total sales for the shift is the difference between the running
+  // sales-counter readings taken at open and close (previousSale/closingSale).
+  // Older sessions predating those two columns fall back to summing ad-hoc
+  // "sales" cash movements, the previous way sales were tracked.
   private buildReport(session: Prisma.CounterSessionGetPayload<{ include: typeof SESSION_INCLUDE & { movements: true } }>) {
     const totalInflow = session.movements.filter((m) => m.type === 'inflow').reduce((sum, m) => sum + Number(m.amount), 0);
     const totalOutflow = session.movements.filter((m) => m.type === 'outflow').reduce((sum, m) => sum + Number(m.amount), 0);
-    const totalSales = session.movements.filter((m) => m.type === 'sales').reduce((sum, m) => sum + Number(m.amount), 0);
+    const previousSale = session.previousSale != null ? Number(session.previousSale) : null;
+    const closingSale = session.closingSale != null ? Number(session.closingSale) : null;
+    const totalSalesFromMovements = session.movements.filter((m) => m.type === 'sales').reduce((sum, m) => sum + Number(m.amount), 0);
+    const totalSales = previousSale != null && closingSale != null ? closingSale - previousSale : totalSalesFromMovements;
     const openingCash = Number(session.openingCash);
     const expectedClosing = openingCash + totalInflow + totalSales - totalOutflow;
     const actualClosing = session.closingCash != null ? Number(session.closingCash) : null;
     const variance = actualClosing != null ? actualClosing - expectedClosing : null;
+    const varianceStatus: 'low' | 'high' | 'exact' | null = variance == null ? null : variance < 0 ? 'low' : variance > 0 ? 'high' : 'exact';
 
     return {
       session,
       openingCash,
+      previousSale,
+      closingSale,
       totalInflow,
       totalOutflow,
       totalSales,
       expectedClosing,
       actualClosing,
       variance,
+      varianceStatus,
     };
   }
 
@@ -256,8 +289,10 @@ export class CountersService {
       closedAt: report.session.closedAt,
       openingCash: report.openingCash,
       openingDenominations: report.session.openingDenominations as Record<string, number>,
+      previousSale: report.previousSale,
       closingCash: report.actualClosing,
       closingDenominations: report.session.closingDenominations as Record<string, number> | null,
+      closingSale: report.closingSale,
       totalInflow: report.totalInflow,
       totalOutflow: report.totalOutflow,
       totalSales: report.totalSales,

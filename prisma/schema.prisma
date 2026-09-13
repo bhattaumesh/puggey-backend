@@ -1080,8 +1080,10 @@ model CounterSession {
   status                 CounterSessionStatus @default(open)
   openingCash            Decimal              @db.Decimal(12, 2)
   openingDenominations   Json
+  previousSale           Decimal?             @db.Decimal(12, 2)
   closingCash            Decimal?             @db.Decimal(12, 2)
   closingDenominations   Json?
+  closingSale            Decimal?             @db.Decimal(12, 2)
   openedAt               DateTime             @default(now())
   closedAt               DateTime?
   createdAt              DateTime             @default(now())

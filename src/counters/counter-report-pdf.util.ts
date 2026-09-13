@@ -11,8 +11,10 @@ export interface CounterReportPdfInput {
   closedAt: Date | null;
   openingCash: number;
   openingDenominations: Record<string, number>;
+  previousSale: number | null;
   closingCash: number | null;
   closingDenominations: Record<string, number> | null;
+  closingSale: number | null;
   totalInflow: number;
   totalOutflow: number;
   totalSales: number;
@@ -67,10 +69,14 @@ export function renderCounterReportPdf(input: CounterReportPdfInput): Promise<Bu
     doc.moveTo(50, y).lineTo(545, y).stroke();
     y += 18;
 
-    function row(label: string, amount: number, opts?: { bold?: boolean }) {
-      doc.font(opts?.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(11);
+    function row(label: string, amount: number, opts?: { bold?: boolean; color?: string }) {
+      doc
+        .font(opts?.bold ? 'Helvetica-Bold' : 'Helvetica')
+        .fontSize(11)
+        .fillColor(opts?.color ?? '#000000');
       doc.text(label, 50, y);
       doc.text(money(amount), 350, y, { width: 195, align: 'right' });
+      doc.fillColor('#000000');
       y += 22;
     }
 
@@ -79,9 +85,11 @@ export function renderCounterReportPdf(input: CounterReportPdfInput): Promise<Bu
     doc.fillColor('#000000');
     y += 16;
 
-    row('Sales', input.totalSales);
+    if (input.previousSale != null) row('Previous sale reading', input.previousSale);
+    if (input.closingSale != null) row('Closing sale reading', input.closingSale);
+    row('Sales (closing - previous)', input.totalSales);
     row('Inflow', input.totalInflow);
-    row('Outflow', -input.totalOutflow);
+    row('Outflow', -input.totalOutflow || 0); // avoid a "-0.00" display when there's no outflow
 
     doc.moveTo(50, y).lineTo(545, y).stroke();
     y += 10;
@@ -95,7 +103,11 @@ export function renderCounterReportPdf(input: CounterReportPdfInput): Promise<Bu
         y += 16;
       }
       if (input.variance != null) {
-        row('Variance', input.variance, { bold: true });
+        // Low (till short) reads as a warning in red, high (till over) in
+        // amber, and an exact match in green -- same three-way read as the
+        // in-app reconciliation table this PDF mirrors.
+        const varianceColor = input.variance < 0 ? '#a8231a' : input.variance > 0 ? '#b8860b' : '#2e7d32';
+        row('Variance', input.variance, { bold: true, color: varianceColor });
       }
     }
 
@@ -104,7 +116,7 @@ export function renderCounterReportPdf(input: CounterReportPdfInput): Promise<Bu
       .fontSize(8)
       .font('Helvetica')
       .fillColor('#666666')
-      .text('Formula: Opening balance + Inflow + Sales - Outflow = Closing balance.', 50, y, { width: 495 });
+      .text('Formula: Opening balance + (Closing sale - Previous sale) + Inflow - Outflow = Closing balance.', 50, y, { width: 495 });
     y += 14;
     doc.text(`Generated on ${input.generatedAt.toLocaleString()}. This is a system-generated report and does not require a signature.`, 50, y, {
       width: 495,

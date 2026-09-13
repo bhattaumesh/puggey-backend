@@ -41,6 +41,11 @@ export class CountersController {
     return this.counters.sessionsForMembership(membershipId);
   }
 
+  @Get('sessions/recent')
+  recentSessions(@Query('limit') limit?: string) {
+    return this.counters.recentSessions(limit ? Number(limit) : 25);
+  }
+
   // Open to every role -- lets an employee "assign themselves" a counter.
   // assertCanAssign() in the service enforces the actual boundary: yourself,
   // always; someone else, only if you're an admin or their supervisor.
