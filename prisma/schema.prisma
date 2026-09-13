@@ -142,6 +142,29 @@ model Tenant {
   @@map("tenants")
 }
 
+// Platform-global, not tenant-scoped -- same category as PugeyStaffMember,
+// so no RLS policy. `Tenant.plan` is a free-form string that means "matches
+// a Plan.key"; there's no FK since a tenant can be on an unknown/legacy plan
+// key without that being a hard error (falls back to the lowest tier).
+//
+// `features` only ever holds PREMIUM-ELIGIBLE keys (see FEATURE_KEYS in
+// src/plans/feature-keys.ts) -- core functionality (employee records,
+// attendance, leave, schedule) is never a toggle here at all, so it's
+// structurally impossible for a plan edit to lock a paying customer out of
+// the basics.
+model Plan {
+  id           String   @id @default(uuid())
+  key          String   @unique
+  label        String
+  maxEmployees Int?
+  features     String[]
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("plans")
+}
+
 model User {
   id           String    @id @default(uuid())
   email        String    @unique

@@ -5,11 +5,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { TenantContextService } from '../common/tenant-context.service';
 import { runInTenantContext } from '../prisma/rls.util';
-import { planLimit, planLabel, isPlanKey } from '../plans/plan-tiers';
+import { planLimit, planLabel, planFeatures, getPlanByKey } from '../plans/plans.util';
 import { DEFAULT_ADVANCE_CATEGORIES } from '../advances/advance-categories.constants';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { UpdateTenantPlanDto } from './dto/update-tenant-plan.dto';
+import { UpdateTenantStatusDto } from './dto/update-tenant-status.dto';
 
 @Injectable()
 export class TenantsService {
@@ -60,7 +61,13 @@ export class TenantsService {
       const tenant = await tx.tenant.findFirst({ where: { id: this.ctx.tenantId } });
       if (!tenant) return null;
       const employeeCount = await tx.tenantMembership.count({ where: { tenantId: tenant.id, status: MembershipStatus.active } });
-      return { ...tenant, planLabel: planLabel(tenant.plan), employeeCount, employeeLimit: planLimit(tenant.plan) };
+      return {
+        ...tenant,
+        planLabel: await planLabel(tx, tenant.plan),
+        employeeCount,
+        employeeLimit: await planLimit(tx, tenant.plan),
+        features: await planFeatures(tx, tenant.plan),
+      };
     });
   }
 
@@ -79,30 +86,41 @@ export class TenantsService {
       const tenants = await tx.tenant.findMany({ orderBy: { createdAt: 'desc' } });
       const counts = await tx.tenantMembership.groupBy({ by: ['tenantId'], where: { status: MembershipStatus.active }, _count: true });
       const countByTenant = new Map(counts.map((c) => [c.tenantId, c._count]));
-      return tenants.map((t) => ({
-        id: t.id,
-        slug: t.slug,
-        name: t.name,
-        status: t.status,
-        plan: t.plan,
-        planLabel: planLabel(t.plan),
-        employeeCount: countByTenant.get(t.id) ?? 0,
-        employeeLimit: planLimit(t.plan),
-        createdAt: t.createdAt,
-      }));
+      return Promise.all(
+        tenants.map(async (t) => ({
+          id: t.id,
+          slug: t.slug,
+          name: t.name,
+          status: t.status,
+          plan: t.plan,
+          planLabel: await planLabel(tx, t.plan),
+          employeeCount: countByTenant.get(t.id) ?? 0,
+          employeeLimit: await planLimit(tx, t.plan),
+          createdAt: t.createdAt,
+        })),
+      );
     });
   }
 
   // Platform-only: move a tenant between plan tiers. This only changes the
-  // stored limit -- there is no payment step here, see plan-tiers.ts.
+  // stored limit -- there is no payment step here, see plans.service.ts.
   async updateTenantPlan(tenantId: string, dto: UpdateTenantPlanDto) {
-    if (!isPlanKey(dto.plan)) {
-      throw new NotFoundException({ error: 'unknown_plan', message: 'That plan does not exist.' });
-    }
     return runInTenantContext(this.prisma, { isPugeyStaff: true }, async (tx) => {
+      const plan = await getPlanByKey(tx, dto.plan);
+      if (!plan) throw new NotFoundException({ error: 'unknown_plan', message: 'That plan does not exist.' });
       const existing = await tx.tenant.findUnique({ where: { id: tenantId } });
       if (!existing) throw new NotFoundException({ error: 'not_found', message: 'No such company.' });
       return tx.tenant.update({ where: { id: tenantId }, data: { plan: dto.plan } });
+    });
+  }
+
+  // Platform-only: activate/suspend/cancel a company. Actually enforced at
+  // login/refresh (see AuthService) -- this just flips the flag they check.
+  async updateTenantStatus(tenantId: string, dto: UpdateTenantStatusDto) {
+    return runInTenantContext(this.prisma, { isPugeyStaff: true }, async (tx) => {
+      const existing = await tx.tenant.findUnique({ where: { id: tenantId } });
+      if (!existing) throw new NotFoundException({ error: 'not_found', message: 'No such company.' });
+      return tx.tenant.update({ where: { id: tenantId }, data: { status: dto.status } });
     });
   }
 }

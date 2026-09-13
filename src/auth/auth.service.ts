@@ -14,6 +14,22 @@ import { DEFAULT_ADVANCE_CATEGORIES } from '../advances/advance-categories.const
 // not. Without this, response timing alone reveals which emails are registered.
 const DUMMY_HASH = bcrypt.hashSync(randomBytes(32).toString('hex'), 10);
 
+// A Super Admin's activate/suspend/cancel action (TenantsService.updateTenantStatus)
+// is only real if it's actually checked somewhere -- this is that somewhere.
+// Checked at login and at token refresh (access tokens are otherwise stateless
+// for 15 minutes, refresh tokens for 30 days), so a suspended company's members
+// are locked out within one refresh cycle at worst, not indefinitely.
+const BLOCKED_TENANT_STATUSES = new Set(['suspended', 'cancelled', 'purged']);
+
+function assertTenantActive(status: string) {
+  if (BLOCKED_TENANT_STATUSES.has(status)) {
+    throw new UnauthorizedException({
+      error: 'company_inactive',
+      message: 'This company\'s access has been suspended. Contact your Puggey representative.',
+    });
+  }
+}
+
 export interface LoginResult {
   accessToken: string;
   refreshToken: string;
@@ -119,6 +135,10 @@ export class AuthService {
       throw new UnauthorizedException({ error: 'invalid_credentials', message: 'Incorrect email or password.' });
     }
 
+    if (resolved.membership) {
+      assertTenantActive(resolved.membership.tenant.status);
+    }
+
     return this.issueSession(user, resolved.membership);
   }
 
@@ -222,17 +242,24 @@ export class AuthService {
   async refresh(rawToken: string): Promise<{ accessToken: string; refreshToken: string }> {
     const tokenHash = AuthService.hashToken(rawToken);
     const existing = await runInTenantContext(this.prisma, { isPugeyStaff: true }, (tx) =>
-      tx.refreshToken.findUnique({ where: { tokenHash }, include: { user: { include: { memberships: true, pugeyStaff: true } } } }),
+      tx.refreshToken.findUnique({
+        where: { tokenHash },
+        include: { user: { include: { memberships: { include: { tenant: true } }, pugeyStaff: true } } },
+      }),
     );
     if (!existing || existing.revokedAt || existing.expiresAt < new Date()) {
       throw new UnauthorizedException({ error: 'invalid_refresh_token', message: 'Session expired, please log in again.' });
+    }
+
+    const membership = existing.tenantId ? existing.user.memberships.find((m) => m.tenantId === existing.tenantId) : undefined;
+    if (membership) {
+      assertTenantActive(membership.tenant.status);
     }
 
     await runInTenantContext(this.prisma, { isPugeyStaff: true }, (tx) =>
       tx.refreshToken.update({ where: { id: existing.id }, data: { revokedAt: new Date() } }),
     );
 
-    const membership = existing.tenantId ? existing.user.memberships.find((m) => m.tenantId === existing.tenantId) : undefined;
     const role = membership ? membership.role : 'PUGEY_STAFF';
     const isPugeyStaff = !membership;
 

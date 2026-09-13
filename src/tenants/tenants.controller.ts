@@ -7,6 +7,7 @@ import { Roles } from '../auth/roles.decorator';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { UpdateTenantPlanDto } from './dto/update-tenant-plan.dto';
+import { UpdateTenantStatusDto } from './dto/update-tenant-status.dto';
 
 @Controller('tenants')
 @UseGuards(JwtAuthGuard)
@@ -48,5 +49,12 @@ export class TenantsController {
   @Patch(':id/plan')
   updateTenantPlan(@Param('id') id: string, @Body() dto: UpdateTenantPlanDto) {
     return this.tenants.updateTenantPlan(id, dto);
+  }
+
+  // Platform-only: activate/suspend/cancel a company.
+  @UseGuards(PugeyStaffGuard)
+  @Patch(':id/status')
+  updateTenantStatus(@Param('id') id: string, @Body() dto: UpdateTenantStatusDto) {
+    return this.tenants.updateTenantStatus(id, dto);
   }
 }

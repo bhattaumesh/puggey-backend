@@ -8,7 +8,7 @@ import { TenantContextService } from '../common/tenant-context.service';
 import { runInTenantContext } from '../prisma/rls.util';
 import { myTeamScope } from '../permissions/permissions';
 import { NotificationsService } from '../notifications/notifications.service';
-import { planLimit, planLabel } from '../plans/plan-tiers';
+import { planLimit, planLabel } from '../plans/plans.util';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { CreateDepartmentDto } from './dto/create-department.dto';
@@ -271,13 +271,13 @@ export class EmployeesService {
     const tenantId = this.ctx.tenantId!;
     const created = await runInTenantContext(this.prisma, { isPugeyStaff: true }, async (tx) => {
       const tenantForLimit = await tx.tenant.findUnique({ where: { id: tenantId } });
-      const limit = planLimit(tenantForLimit?.plan ?? 'trial');
+      const limit = await planLimit(tx, tenantForLimit?.plan ?? 'trial');
       if (limit !== null) {
         const activeCount = await tx.tenantMembership.count({ where: { tenantId, status: MembershipStatus.active } });
         if (activeCount >= limit) {
           throw new BadRequestException({
             error: 'plan_limit_reached',
-            message: `The ${planLabel(tenantForLimit?.plan ?? 'trial')} plan allows up to ${limit} employees. Ask your Puggey contact about upgrading.`,
+            message: `The ${await planLabel(tx, tenantForLimit?.plan ?? 'trial')} plan allows up to ${limit} employees. Ask your Puggey contact about upgrading.`,
           });
         }
       }
