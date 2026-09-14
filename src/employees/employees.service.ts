@@ -185,7 +185,7 @@ export class EmployeesService {
         }
       }
 
-      const [rackLogs, counterSessions, tasks] = await Promise.all([
+      const [rackLogs, counterSessions, tasks, productLogs, bills] = await Promise.all([
         tx.rackCleaningLog.findMany({
           where: { membershipId },
           orderBy: { cleanedAt: 'desc' },
@@ -202,6 +202,20 @@ export class EmployeesService {
           where: { membershipId, status: 'completed' },
           orderBy: { updatedAt: 'desc' },
           take: limit,
+        }),
+        tx.productReceivedLog.findMany({
+          where: { membershipId },
+          orderBy: { receivedAt: 'desc' },
+          take: limit,
+          include: { vendor: { select: { name: true } } },
+        }),
+        // Drafts aren't "entered" yet -- only bills someone has actually
+        // filled in count as work done.
+        tx.bill.findMany({
+          where: { membershipId, status: { not: 'draft' } },
+          orderBy: { updatedAt: 'desc' },
+          take: limit,
+          include: { vendor: { select: { name: true } } },
         }),
       ]);
 
@@ -230,6 +244,22 @@ export class EmployeesService {
           rating: null as number | null,
           status: 'completed' as const,
         })),
+        ...productLogs.map((p) => ({
+          kind: 'product' as const,
+          id: p.id,
+          title: `Received from ${p.vendor.name}`,
+          date: p.receivedAt,
+          rating: p.qualityRating,
+          status: p.qualityRating != null ? ('rated' as const) : ('unrated' as const),
+        })),
+        ...bills.map((b) => ({
+          kind: 'bill' as const,
+          id: b.id,
+          title: `Entered bill${b.billNumber ? ` ${b.billNumber}` : ''}${b.vendor ? ` · ${b.vendor.name}` : ''}`,
+          date: b.updatedAt,
+          rating: b.qualityRating,
+          status: b.qualityRating != null ? ('rated' as const) : ('unrated' as const),
+        })),
       ];
 
       items.sort((a, b) => b.date.getTime() - a.date.getTime());
@@ -248,7 +278,7 @@ export class EmployeesService {
     return this.tenantPrisma.run(async (tx) => {
       const memberSelect = { select: { id: true, user: { select: { fullName: true, email: true } } } } as const;
 
-      const [rackLogs, counterSessions, tasks] = await Promise.all([
+      const [rackLogs, counterSessions, tasks, productLogs, bills] = await Promise.all([
         tx.rackCleaningLog.findMany({
           orderBy: { cleanedAt: 'desc' },
           take: limit,
@@ -265,6 +295,17 @@ export class EmployeesService {
           orderBy: { updatedAt: 'desc' },
           take: limit,
           include: { membership: memberSelect },
+        }),
+        tx.productReceivedLog.findMany({
+          orderBy: { receivedAt: 'desc' },
+          take: limit,
+          include: { vendor: { select: { name: true } }, membership: memberSelect },
+        }),
+        tx.bill.findMany({
+          where: { status: { not: 'draft' } },
+          orderBy: { updatedAt: 'desc' },
+          take: limit,
+          include: { vendor: { select: { name: true } }, membership: memberSelect },
         }),
       ]);
 
@@ -298,6 +339,26 @@ export class EmployeesService {
           status: 'completed' as const,
           membershipId: t.membershipId,
           employeeName: t.membership.user.fullName || t.membership.user.email,
+        })),
+        ...productLogs.map((p) => ({
+          kind: 'product' as const,
+          id: p.id,
+          title: `Received from ${p.vendor.name}`,
+          date: p.receivedAt,
+          rating: p.qualityRating,
+          status: p.qualityRating != null ? ('rated' as const) : ('unrated' as const),
+          membershipId: p.membershipId,
+          employeeName: p.membership.user.fullName || p.membership.user.email,
+        })),
+        ...bills.map((b) => ({
+          kind: 'bill' as const,
+          id: b.id,
+          title: `Entered bill${b.billNumber ? ` ${b.billNumber}` : ''}${b.vendor ? ` · ${b.vendor.name}` : ''}`,
+          date: b.updatedAt,
+          rating: b.qualityRating,
+          status: b.qualityRating != null ? ('rated' as const) : ('unrated' as const),
+          membershipId: b.membershipId,
+          employeeName: b.membership.user.fullName || b.membership.user.email,
         })),
       ];
 

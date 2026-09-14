@@ -9,7 +9,7 @@ import { CreateRackDto } from './dto/create-rack.dto';
 import { UpdateRackDto } from './dto/update-rack.dto';
 import { CleanRackDto } from './dto/clean-rack.dto';
 import { AssignRackDto } from './dto/assign-rack.dto';
-import { RateCleaningDto } from './dto/rate-cleaning.dto';
+import { RateWorkDto } from '../common/dto/rate-work.dto';
 
 const PENDING_AFTER_DAYS = 30;
 
@@ -303,7 +303,7 @@ export class RacksService {
   // Supervisor/admin reviews a completed cleaning and scores it -- separate
   // from clean() because the person rating is never the person who cleaned;
   // route access already restricts this to SUPER_ADMIN/SUPERVISOR.
-  async rateCleaning(logId: string, dto: RateCleaningDto) {
+  async rateCleaning(logId: string, dto: RateWorkDto) {
     return this.tenantPrisma.run(async (tx) => {
       const existing = await tx.rackCleaningLog.findUnique({ where: { id: logId } });
       if (!existing) throw new NotFoundException({ error: 'not_found', message: 'No such cleaning log.' });

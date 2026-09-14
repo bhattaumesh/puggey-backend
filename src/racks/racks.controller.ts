@@ -7,7 +7,7 @@ import { CreateRackDto } from './dto/create-rack.dto';
 import { UpdateRackDto } from './dto/update-rack.dto';
 import { CleanRackDto } from './dto/clean-rack.dto';
 import { AssignRackDto } from './dto/assign-rack.dto';
-import { RateCleaningDto } from './dto/rate-cleaning.dto';
+import { RateWorkDto } from '../common/dto/rate-work.dto';
 
 @Controller('racks')
 @UseGuards(JwtAuthGuard)
@@ -82,7 +82,7 @@ export class RacksController {
   @UseGuards(RolesGuard)
   @Roles('SUPER_ADMIN', 'SUPERVISOR')
   @Patch('cleaning-logs/:id/rating')
-  rateCleaning(@Param('id') id: string, @Body() dto: RateCleaningDto) {
+  rateCleaning(@Param('id') id: string, @Body() dto: RateWorkDto) {
     return this.racks.rateCleaning(id, dto);
   }
 }

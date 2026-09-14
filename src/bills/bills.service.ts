@@ -4,6 +4,7 @@ import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { TenantContextService } from '../common/tenant-context.service';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { EnterBillDto } from './dto/enter-bill.dto';
+import { RateWorkDto } from '../common/dto/rate-work.dto';
 
 const RECENT_LIMIT = 30;
 
@@ -13,6 +14,7 @@ const BILL_INCLUDE = {
   vendor: true,
   membership: { select: { id: true, user: { select: { fullName: true, email: true } } } },
   paidBy: { select: { id: true, user: { select: { fullName: true, email: true } } } },
+  ratedBy: { select: { id: true, user: { select: { fullName: true, email: true } } } },
 } satisfies Prisma.BillInclude;
 
 @Injectable()
@@ -106,6 +108,28 @@ export class BillsService {
       return tx.bill.update({
         where: { id: billId },
         data: { status: 'paid', paidAt: new Date(), paidByMembershipId },
+        include: BILL_INCLUDE,
+      });
+    });
+  }
+
+  // Same guard shape as RacksService.rateCleaning/VendorsService.rateReceipt
+  // -- rates the quality of the bill entry, restricted to SUPER_ADMIN/
+  // SUPERVISOR at the controller.
+  async rateBill(billId: string, dto: RateWorkDto) {
+    return this.tenantPrisma.run(async (tx) => {
+      const bill = await tx.bill.findUnique({ where: { id: billId } });
+      if (!bill) throw new NotFoundException({ error: 'not_found', message: 'No such bill.' });
+      if (bill.status === 'draft') throw new BadRequestException({ error: 'not_entered', message: 'This bill has not been entered yet.' });
+      const raterMembershipId = await this.myMembershipId(tx);
+      return tx.bill.update({
+        where: { id: billId },
+        data: {
+          qualityRating: dto.qualityRating,
+          ratingRemarks: dto.remarks ?? null,
+          ratedByMembershipId: raterMembershipId,
+          ratedAt: new Date(),
+        },
         include: BILL_INCLUDE,
       });
     });

@@ -6,6 +6,7 @@ import { Roles } from '../auth/roles.decorator';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { ReceiveProductDto } from './dto/receive-product.dto';
 import { UpdateReceiptProductDto } from './dto/update-receipt-product.dto';
+import { RateWorkDto } from '../common/dto/rate-work.dto';
 
 @Controller('vendors')
 @UseGuards(JwtAuthGuard)
@@ -61,5 +62,14 @@ export class VendorsController {
   @Patch('receipts/:id')
   updateReceiptProduct(@Param('id') id: string, @Body() dto: UpdateReceiptProductDto) {
     return this.vendors.updateReceiptProduct(id, dto);
+  }
+
+  // Same guard as RacksController.rateCleaning -- a supervisor/admin rating
+  // work, never the person who logged it.
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN', 'SUPERVISOR')
+  @Patch('receipts/:id/rating')
+  rateReceipt(@Param('id') id: string, @Body() dto: RateWorkDto) {
+    return this.vendors.rateReceipt(id, dto);
   }
 }

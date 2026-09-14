@@ -5,6 +5,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { EnterBillDto } from './dto/enter-bill.dto';
+import { RateWorkDto } from '../common/dto/rate-work.dto';
 
 @Controller('bills')
 @UseGuards(JwtAuthGuard)
@@ -45,5 +46,12 @@ export class BillsController {
   @Patch(':id/pay')
   markPaid(@Param('id') id: string) {
     return this.bills.markPaid(id);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN', 'SUPERVISOR')
+  @Patch(':id/rating')
+  rateBill(@Param('id') id: string, @Body() dto: RateWorkDto) {
+    return this.bills.rateBill(id, dto);
   }
 }

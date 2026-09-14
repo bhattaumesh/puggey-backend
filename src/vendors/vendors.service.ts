@@ -5,6 +5,9 @@ import { TenantContextService } from '../common/tenant-context.service';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { ReceiveProductDto } from './dto/receive-product.dto';
 import { UpdateReceiptProductDto } from './dto/update-receipt-product.dto';
+import { RateWorkDto } from '../common/dto/rate-work.dto';
+
+const MEMBER_SELECT = { select: { id: true, user: { select: { fullName: true, email: true } } } } as const;
 
 const RECENT_LIMIT = 30;
 
@@ -59,7 +62,8 @@ export class VendorsService {
         include: {
           vendor: true,
           product: true,
-          membership: { select: { id: true, user: { select: { fullName: true, email: true } } } },
+          membership: MEMBER_SELECT,
+          ratedBy: MEMBER_SELECT,
         },
       }),
     );
@@ -74,7 +78,7 @@ export class VendorsService {
         where: { membershipId },
         orderBy: { receivedAt: 'desc' },
         take: limit,
-        include: { vendor: true, product: true },
+        include: { vendor: true, product: true, ratedBy: MEMBER_SELECT },
       });
     });
   }
@@ -87,7 +91,29 @@ export class VendorsService {
         where: { vendorId },
         orderBy: { receivedAt: 'desc' },
         take: limit,
-        include: { product: true, membership: { select: { id: true, user: { select: { fullName: true, email: true } } } } },
+        include: { product: true, membership: MEMBER_SELECT, ratedBy: MEMBER_SELECT },
+      });
+    });
+  }
+
+  // Same guard shape as RacksService.rateCleaning: RolesGuard restricts
+  // this to SUPER_ADMIN/SUPERVISOR at the controller, and the rater is
+  // never the person who logged the receipt in practice, since employees
+  // don't have that role.
+  async rateReceipt(logId: string, dto: RateWorkDto) {
+    return this.tenantPrisma.run(async (tx) => {
+      const existing = await tx.productReceivedLog.findUnique({ where: { id: logId } });
+      if (!existing) throw new NotFoundException({ error: 'not_found', message: 'No such receipt.' });
+      const raterMembershipId = await this.myMembershipId(tx);
+      return tx.productReceivedLog.update({
+        where: { id: logId },
+        data: {
+          qualityRating: dto.qualityRating,
+          ratingRemarks: dto.remarks ?? null,
+          ratedByMembershipId: raterMembershipId,
+          ratedAt: new Date(),
+        },
+        include: { vendor: true, product: true, membership: MEMBER_SELECT, ratedBy: MEMBER_SELECT },
       });
     });
   }
@@ -154,7 +180,8 @@ export class VendorsService {
         include: {
           vendor: true,
           product: true,
-          membership: { select: { id: true, user: { select: { fullName: true, email: true } } } },
+          membership: MEMBER_SELECT,
+          ratedBy: MEMBER_SELECT,
         },
       });
     });

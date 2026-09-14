@@ -305,10 +305,12 @@ model TenantMembership {
   rackAssignmentsReceived RackAssignment[] @relation("RackAssignee")
   rackAssignmentsGiven    RackAssignment[] @relation("RackAssigner")
   productReceivedLogs ProductReceivedLog[]
+  productReceivedLogsRated ProductReceivedLog[] @relation("ProductReceivedLogRater")
   shiftAssignmentsReceived ShiftAssignment[] @relation("ShiftAssignee")
   shiftAssignmentsGiven    ShiftAssignment[] @relation("ShiftAssigner")
   billsEntered             Bill[]            @relation("BillEnteredBy")
   billsMarkedPaid          Bill[]            @relation("BillPaidBy")
+  billsRated               Bill[]            @relation("BillRater")
   counterSessionsHandled   CounterSession[]  @relation("CounterHandler")
   counterSessionsAssigned  CounterSession[]  @relation("CounterAssigner")
   counterSessionsVerified  CounterSession[]  @relation("CounterVerifier")
@@ -502,11 +504,18 @@ model ProductReceivedLog {
   // free text, entered at receipt time, not a foreign key to Bill: the
   // matching bill may be entered separately, later, by someone else.
   billNumber   String?
+  // Same rating shape as RackCleaningLog: set later by a supervisor/admin,
+  // never by the person who logged the receipt.
+  qualityRating       Int?
+  ratingRemarks       String?
+  ratedByMembershipId String?
+  ratedAt             DateTime?
 
-  tenant     Tenant           @relation(fields: [tenantId], references: [id])
-  vendor     Vendor           @relation(fields: [vendorId], references: [id])
-  membership TenantMembership @relation(fields: [membershipId], references: [id])
-  product    Product?         @relation(fields: [productId], references: [id])
+  tenant     Tenant            @relation(fields: [tenantId], references: [id])
+  vendor     Vendor            @relation(fields: [vendorId], references: [id])
+  membership TenantMembership  @relation(fields: [membershipId], references: [id])
+  product    Product?          @relation(fields: [productId], references: [id])
+  ratedBy    TenantMembership? @relation("ProductReceivedLogRater", fields: [ratedByMembershipId], references: [id])
 
   @@index([tenantId])
   @@index([vendorId])
@@ -1057,6 +1066,12 @@ model Bill {
   paidAt             DateTime?
   paidByMembershipId String?
   remarks            String?
+  // Same rating shape as RackCleaningLog: rates the quality of the bill
+  // entry itself, set later by a supervisor/admin, never the enterer.
+  qualityRating        Int?
+  ratingRemarks        String?
+  ratedByMembershipId  String?
+  ratedAt              DateTime?
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
 
@@ -1064,6 +1079,7 @@ model Bill {
   vendor     Vendor?           @relation(fields: [vendorId], references: [id])
   membership TenantMembership  @relation("BillEnteredBy", fields: [membershipId], references: [id])
   paidBy     TenantMembership? @relation("BillPaidBy", fields: [paidByMembershipId], references: [id])
+  ratedBy    TenantMembership? @relation("BillRater", fields: [ratedByMembershipId], references: [id])
 
   @@index([tenantId])
   @@index([status])
