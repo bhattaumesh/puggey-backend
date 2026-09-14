@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 export class VerifyCounterSessionDto {
   @IsOptional()
@@ -6,4 +6,9 @@ export class VerifyCounterSessionDto {
   @Min(1)
   @Max(5)
   workRating?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  remarks?: string;
 }

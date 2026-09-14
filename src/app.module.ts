@@ -17,6 +17,7 @@ import { ReportsModule } from './reports/reports.module';
 import { ApiKeysModule } from './api-keys/api-keys.module';
 import { ExternalModule } from './external/external.module';
 import { PlansModule } from './plans/plans.module';
+import { BusinessTypesModule } from './business-types/business-types.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { DocumentsModule } from './documents/documents.module';
 import { AdvancesModule } from './advances/advances.module';
@@ -46,6 +47,7 @@ import { CountersModule } from './counters/counters.module';
     ApiKeysModule,
     ExternalModule,
     PlansModule,
+    BusinessTypesModule,
     PayrollModule,
     DocumentsModule,
     AdvancesModule,

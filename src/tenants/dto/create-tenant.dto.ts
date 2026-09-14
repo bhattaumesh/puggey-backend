@@ -18,6 +18,10 @@ export class CreateTenantDto {
   @IsHexColor()
   accentColorHex?: string;
 
+  @IsString()
+  @MinLength(1, { message: 'Choose a business type.' })
+  businessType!: string;
+
   @IsEmail()
   adminEmail!: string;
 

@@ -310,10 +310,15 @@ export class RacksService {
       const raterMembershipId = await this.myMembershipId(tx);
       return tx.rackCleaningLog.update({
         where: { id: logId },
-        data: { qualityRating: dto.qualityRating, ratedByMembershipId: raterMembershipId, ratedAt: new Date() },
+        data: {
+          qualityRating: dto.qualityRating,
+          ratingRemarks: dto.remarks ?? null,
+          ratedByMembershipId: raterMembershipId,
+          ratedAt: new Date(),
+        },
         include: {
-          membership: { include: { user: { select: { fullName: true, email: true } } } },
-          ratedBy: { include: { user: { select: { fullName: true, email: true } } } },
+          membership: { select: { id: true, user: { select: { fullName: true, email: true } } } },
+          ratedBy: { select: { id: true, user: { select: { fullName: true, email: true } } } },
         },
       });
     });

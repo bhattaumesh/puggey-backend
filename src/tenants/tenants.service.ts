@@ -6,6 +6,7 @@ import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { TenantContextService } from '../common/tenant-context.service';
 import { runInTenantContext } from '../prisma/rls.util';
 import { planLimit, planLabel, planFeatures, getPlanByKey } from '../plans/plans.util';
+import { businessTypeLabel, getBusinessTypeByKey } from '../business-types/business-types.util';
 import { DEFAULT_ADVANCE_CATEGORIES } from '../advances/advance-categories.constants';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
@@ -29,8 +30,18 @@ export class TenantsService {
       const existingSlug = await tx.tenant.findUnique({ where: { slug: dto.slug } });
       if (existingSlug) throw new ConflictException({ error: 'slug_taken', message: 'That company slug is already in use.' });
 
+      const businessType = await getBusinessTypeByKey(tx, dto.businessType);
+      if (!businessType) throw new NotFoundException({ error: 'unknown_business_type', message: 'That business type does not exist.' });
+
       const tenant = await tx.tenant.create({
-        data: { slug: dto.slug, name: dto.name, companyCode: dto.companyCode, accentColorHex: dto.accentColorHex, status: 'active' },
+        data: {
+          slug: dto.slug,
+          name: dto.name,
+          companyCode: dto.companyCode,
+          accentColorHex: dto.accentColorHex,
+          businessType: dto.businessType,
+          status: 'active',
+        },
       });
 
       let user = await tx.user.findUnique({ where: { email: dto.adminEmail } });
@@ -64,6 +75,7 @@ export class TenantsService {
       return {
         ...tenant,
         planLabel: await planLabel(tx, tenant.plan),
+        businessTypeLabel: await businessTypeLabel(tx, tenant.businessType),
         employeeCount,
         employeeLimit: await planLimit(tx, tenant.plan),
         features: await planFeatures(tx, tenant.plan),
@@ -94,6 +106,8 @@ export class TenantsService {
           status: t.status,
           plan: t.plan,
           planLabel: await planLabel(tx, t.plan),
+          businessType: t.businessType,
+          businessTypeLabel: await businessTypeLabel(tx, t.businessType),
           employeeCount: countByTenant.get(t.id) ?? 0,
           employeeLimit: await planLimit(tx, t.plan),
           createdAt: t.createdAt,

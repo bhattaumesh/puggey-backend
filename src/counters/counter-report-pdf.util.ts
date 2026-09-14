@@ -25,6 +25,7 @@ export interface CounterReportPdfInput {
   verifiedByName: string | null;
   verifiedAt: Date | null;
   workRating: number | null;
+  verificationRemarks: string | null;
   generatedAt: Date;
 }
 
@@ -150,6 +151,11 @@ export function renderCounterReportPdf(input: CounterReportPdfInput): Promise<Bu
         );
       doc.fillColor('#000000');
       y += 20;
+      if (verified && input.verificationRemarks) {
+        doc.fontSize(9).font('Helvetica').fillColor('#333333').text(`Remarks: ${input.verificationRemarks}`, 50, y, { width: 495 });
+        doc.fillColor('#000000');
+        y += 16;
+      }
     }
 
     y += 10;

@@ -277,7 +277,12 @@ export class CountersService {
 
       return tx.counterSession.update({
         where: { id: sessionId },
-        data: { verifiedByMembershipId: myId, verifiedAt: new Date(), workRating: dto.workRating ?? null },
+        data: {
+          verifiedByMembershipId: myId,
+          verifiedAt: new Date(),
+          workRating: dto.workRating ?? null,
+          verificationRemarks: dto.remarks ?? null,
+        },
         include: SESSION_INCLUDE,
       });
     });
@@ -362,6 +367,7 @@ export class CountersService {
       verifiedByName: report.session.verifiedBy ? report.session.verifiedBy.user.fullName || report.session.verifiedBy.user.email : null,
       verifiedAt: report.session.verifiedAt,
       workRating: report.session.workRating,
+      verificationRemarks: report.session.verificationRemarks,
       generatedAt: new Date(),
     });
   }

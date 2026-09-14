@@ -79,6 +79,10 @@ model Tenant {
   name                 String
   status               TenantStatus @default(trial)
   plan                 String       @default("trial")
+  // Free-form, same convention as `plan`: matches a BusinessType.key, no FK.
+  // Nullable since it's collected at creation going forward but wasn't asked
+  // of tenants that already existed when this was added.
+  businessType         String?
   locale               String       @default("en") // "en" | "ne"
   // Which calendar reads as primary across the app/website, and which one
   // payroll periods and attendance dates are entered/labeled in. The other
@@ -163,6 +167,21 @@ model Plan {
   updatedAt    DateTime @updatedAt
 
   @@map("plans")
+}
+
+// Platform-global, same category as Plan -- Super Admin manages the list
+// (add/edit/remove as new clients need a category that doesn't exist yet),
+// and `Tenant.businessType` is a free-form string that means "matches a
+// BusinessType.key", same no-FK convention as `Tenant.plan`.
+model BusinessType {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  label     String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("business_types")
 }
 
 model User {
@@ -371,6 +390,10 @@ model RackCleaningLog {
   // null until someone rates it. 1-5, range enforced in the DTO rather than
   // a DB constraint, same approach as the payroll percent fields.
   qualityRating       Int?
+  // The rater's own comment -- kept separate from `remarks` above, which is
+  // the cleaner's note left at cleaning time, so one action can never
+  // overwrite the other's text.
+  ratingRemarks       String?
   ratedByMembershipId String?
   ratedAt             DateTime?
 
@@ -1091,6 +1114,7 @@ model CounterSession {
   verifiedByMembershipId String?
   verifiedAt             DateTime?
   workRating             Int?
+  verificationRemarks    String?
   openedAt               DateTime             @default(now())
   closedAt               DateTime?
   createdAt              DateTime             @default(now())
