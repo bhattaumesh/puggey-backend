@@ -237,6 +237,75 @@ export class EmployeesService {
     });
   }
 
+  // The Today page's tenant-wide "Recent works" feed -- who did what,
+  // most recent first, across the whole team. Deliberately open to any
+  // employee rather than gated by myTeamScope like list()/recentWork() on
+  // someone else's profile: the counter-verification flow already made
+  // "see a peer's recent work" a normal, expected capability for everyone,
+  // and this feed is the same idea generalised across rack cleaning and
+  // completed tasks too.
+  async recentWorkForTenant(limit = 30) {
+    return this.tenantPrisma.run(async (tx) => {
+      const memberSelect = { select: { id: true, user: { select: { fullName: true, email: true } } } } as const;
+
+      const [rackLogs, counterSessions, tasks] = await Promise.all([
+        tx.rackCleaningLog.findMany({
+          orderBy: { cleanedAt: 'desc' },
+          take: limit,
+          include: { rack: { select: { name: true } }, membership: memberSelect },
+        }),
+        tx.counterSession.findMany({
+          where: { status: 'closed' },
+          orderBy: { closedAt: 'desc' },
+          take: limit,
+          include: { counter: { select: { name: true } }, membership: memberSelect },
+        }),
+        tx.task.findMany({
+          where: { status: 'completed' },
+          orderBy: { updatedAt: 'desc' },
+          take: limit,
+          include: { membership: memberSelect },
+        }),
+      ]);
+
+      const items = [
+        ...rackLogs.map((l) => ({
+          kind: 'rack' as const,
+          id: l.id,
+          title: `Cleaned ${l.rack.name}`,
+          date: l.cleanedAt,
+          rating: l.qualityRating,
+          status: l.qualityRating != null ? ('rated' as const) : ('unrated' as const),
+          membershipId: l.membershipId,
+          employeeName: l.membership.user.fullName || l.membership.user.email,
+        })),
+        ...counterSessions.map((s) => ({
+          kind: 'counter' as const,
+          id: s.id,
+          title: `Handled ${s.counter.name}`,
+          date: s.closedAt!,
+          rating: s.workRating,
+          status: s.verifiedAt ? ('verified' as const) : ('pending_verification' as const),
+          membershipId: s.membershipId,
+          employeeName: s.membership.user.fullName || s.membership.user.email,
+        })),
+        ...tasks.map((t) => ({
+          kind: 'task' as const,
+          id: t.id,
+          title: t.title,
+          date: t.updatedAt,
+          rating: null as number | null,
+          status: 'completed' as const,
+          membershipId: t.membershipId,
+          employeeName: t.membership.user.fullName || t.membership.user.email,
+        })),
+      ];
+
+      items.sort((a, b) => b.date.getTime() - a.date.getTime());
+      return items.slice(0, limit);
+    });
+  }
+
   async me() {
     const found = await this.tenantPrisma.run(async (tx) => {
       const myId = await this.myMembershipId(tx);

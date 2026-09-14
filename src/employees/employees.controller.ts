@@ -22,6 +22,14 @@ export class EmployeesController {
     return this.employees.me();
   }
 
+  // Declared before ':id' so Nest doesn't swallow this literal path as a
+  // membership id -- tenant-wide, unlike list() below, since it's meant to
+  // be visible to any employee (see recentWorkForTenant's own comment).
+  @Get('employees/recent-work')
+  recentWorkForTenant() {
+    return this.employees.recentWorkForTenant();
+  }
+
   @Get('employees')
   list() {
     return this.employees.list();
