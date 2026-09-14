@@ -45,6 +45,11 @@ export class EmployeesController {
     return this.employees.recentWork(id);
   }
 
+  @Get('employees/:id/rating-summary')
+  ratingSummary(@Param('id') id: string) {
+    return this.employees.ratingSummary(id);
+  }
+
   @UseGuards(RolesGuard)
   @Roles('SUPER_ADMIN')
   @Post('employees')

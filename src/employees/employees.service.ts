@@ -267,6 +267,58 @@ export class EmployeesService {
     });
   }
 
+  // Average rating per work category (cleaning/products/bills) plus an
+  // overall average weighted by how many of each an employee actually has
+  // -- lets a supervisor see at a glance which area someone is strongest
+  // in, not just a single blended number. Same access boundary as
+  // recentWork() (self, subtree, or myTeamScope 'all').
+  async ratingSummary(membershipId: string) {
+    const scope = myTeamScope(this.ctx.role ?? 'EMPLOYEE');
+
+    return this.tenantPrisma.run(async (tx) => {
+      const myId = await this.myMembershipId(tx);
+      const isSelf = myId === membershipId;
+      if (scope === 'none' && !isSelf) {
+        throw new ForbiddenException({ error: 'not_authorized', message: 'You do not have access to this profile.' });
+      }
+      if (scope === 'subtree' && !isSelf) {
+        const subtreeIds = myId ? await this.getReportSubtreeIds(tx, myId) : [];
+        if (!subtreeIds.includes(membershipId)) {
+          throw new ForbiddenException({ error: 'not_authorized', message: 'You do not have access to this profile.' });
+        }
+      }
+
+      const [rack, product, bill] = await Promise.all([
+        tx.rackCleaningLog.aggregate({
+          where: { membershipId, qualityRating: { not: null } },
+          _avg: { qualityRating: true },
+          _count: { qualityRating: true },
+        }),
+        tx.productReceivedLog.aggregate({
+          where: { membershipId, qualityRating: { not: null } },
+          _avg: { qualityRating: true },
+          _count: { qualityRating: true },
+        }),
+        tx.bill.aggregate({
+          where: { membershipId, qualityRating: { not: null } },
+          _avg: { qualityRating: true },
+          _count: { qualityRating: true },
+        }),
+      ]);
+
+      const cleaning = { average: rack._avg.qualityRating, count: rack._count.qualityRating };
+      const products = { average: product._avg.qualityRating, count: product._count.qualityRating };
+      const bills = { average: bill._avg.qualityRating, count: bill._count.qualityRating };
+
+      const totalCount = cleaning.count + products.count + bills.count;
+      const weightedSum =
+        (cleaning.average ?? 0) * cleaning.count + (products.average ?? 0) * products.count + (bills.average ?? 0) * bills.count;
+      const overall = { average: totalCount > 0 ? weightedSum / totalCount : null, count: totalCount };
+
+      return { overall, cleaning, products, bills };
+    });
+  }
+
   // The Today page's tenant-wide "Recent works" feed -- who did what,
   // most recent first, across the whole team. Deliberately open to any
   // employee rather than gated by myTeamScope like list()/recentWork() on
