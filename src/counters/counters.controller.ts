@@ -10,6 +10,7 @@ import { CloseCounterSessionDto } from './dto/close-session.dto';
 import { AddCashMovementDto } from './dto/add-cash-movement.dto';
 import { VerifyCounterSessionDto } from './dto/verify-session.dto';
 import { EditClosingDetailsDto } from './dto/edit-closing-details.dto';
+import { EditOpeningDetailsDto } from './dto/edit-opening-details.dto';
 
 @Controller('counters')
 @UseGuards(JwtAuthGuard)
@@ -69,6 +70,16 @@ export class CountersController {
   @Patch('sessions/:id/closing-details')
   editClosingDetails(@Param('id') id: string, @Body() dto: EditClosingDetailsDto) {
     return this.counters.editClosingDetails(id, dto);
+  }
+
+  // Admin-only: unlike closing-details (open to whoever handled the till),
+  // rewriting the OPENING figures is a more consequential correction, so
+  // it's restricted to Super Admin.
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN')
+  @Patch('sessions/:id/opening-details')
+  editOpeningDetails(@Param('id') id: string, @Body() dto: EditOpeningDetailsDto) {
+    return this.counters.editOpeningDetails(id, dto);
   }
 
   // Open to every role, like openSession -- the real boundary (anyone but

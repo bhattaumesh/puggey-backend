@@ -8,6 +8,7 @@ import { CloseCounterSessionDto } from './dto/close-session.dto';
 import { AddCashMovementDto } from './dto/add-cash-movement.dto';
 import { VerifyCounterSessionDto } from './dto/verify-session.dto';
 import { EditClosingDetailsDto } from './dto/edit-closing-details.dto';
+import { EditOpeningDetailsDto } from './dto/edit-opening-details.dto';
 import { renderCounterReportPdf } from './counter-report-pdf.util';
 
 type Tx = Prisma.TransactionClient;
@@ -254,6 +255,28 @@ export class CountersService {
       return tx.counterSession.update({
         where: { id: sessionId },
         data: { closingCash, closingDenominations: dto.closingDenominations, closingSale: dto.closingSale },
+        include: SESSION_INCLUDE,
+      });
+    });
+  }
+
+  // Admin-only: corrects the figures a session was OPENED with -- broader
+  // than editClosingDetails (open to whoever handled the till, on the
+  // closing side only), since rewriting the starting point of a
+  // reconciliation is more consequential. Works whether the session is
+  // still open or already closed; locked once verified, same as closing.
+  async editOpeningDetails(sessionId: string, dto: EditOpeningDetailsDto) {
+    return this.tenantPrisma.run(async (tx) => {
+      const session = await tx.counterSession.findUnique({ where: { id: sessionId } });
+      if (!session) throw new NotFoundException({ error: 'not_found', message: 'No such counter session.' });
+      if (session.verifiedAt) {
+        throw new BadRequestException({ error: 'already_verified', message: 'This session has already been verified and can no longer be edited.' });
+      }
+      const openingCash = this.validateDenominations(dto.openingDenominations);
+
+      return tx.counterSession.update({
+        where: { id: sessionId },
+        data: { openingCash, openingDenominations: dto.openingDenominations, previousSale: dto.previousSale },
         include: SESSION_INCLUDE,
       });
     });
