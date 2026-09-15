@@ -667,9 +667,11 @@ model AttendanceEvent {
   membershipId String
   type         String // "check_in" | "check_out"
   occurredAt   DateTime @default(now())
-  source       String   @default("web") // web | admin_correction (geofence/qr/biometric later)
+  source       String   @default("web") // web | admin_correction | qr_geofence
   reason       String? // required for admin_correction
   actorUserId  String? // who recorded it, if different from the membership's own user
+  latitude     Float? // scanning device's coordinates, qr_geofence only
+  longitude    Float?
   createdAt    DateTime @default(now())
 
   tenant     Tenant           @relation(fields: [tenantId], references: [id])
