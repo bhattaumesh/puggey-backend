@@ -94,19 +94,54 @@ export class RacksService {
 
   // Latest cleaning log per rack, tenant-scoped -- shared by list/search/pending
   // so "last cleaned" always means the same thing everywhere it's shown.
-  private async latestLogByRack(tx: Tx): Promise<Map<string, { cleanedAt: Date; cleanedBy: string; remarks: string | null }>> {
+  // Carries the rating fields too (id, qualityRating, ratingRemarks, ratedBy)
+  // even though search()/the rack list only reads cleanedAt/cleanedBy --
+  // recentlyCleaned() needs them to let a supervisor rate straight from that
+  // list instead of having to open each rack's own history first.
+  private async latestLogByRack(tx: Tx): Promise<
+    Map<
+      string,
+      {
+        id: string;
+        cleanedAt: Date;
+        cleanedBy: string;
+        remarks: string | null;
+        qualityRating: number | null;
+        ratingRemarks: string | null;
+        ratedBy: { user: { fullName: string | null; email: string } } | null;
+      }
+    >
+  > {
     const logs = await tx.rackCleaningLog.findMany({
       where: { tenantId: this.ctx.tenantId! },
       orderBy: { cleanedAt: 'desc' },
-      include: { membership: { select: { id: true, user: { select: { fullName: true, email: true } } } } },
+      include: {
+        membership: { select: { id: true, user: { select: { fullName: true, email: true } } } },
+        ratedBy: { select: { user: { select: { fullName: true, email: true } } } },
+      },
     });
-    const map = new Map<string, { cleanedAt: Date; cleanedBy: string; remarks: string | null }>();
+    const map = new Map<
+      string,
+      {
+        id: string;
+        cleanedAt: Date;
+        cleanedBy: string;
+        remarks: string | null;
+        qualityRating: number | null;
+        ratingRemarks: string | null;
+        ratedBy: { user: { fullName: string | null; email: string } } | null;
+      }
+    >();
     for (const log of logs) {
       if (map.has(log.rackId)) continue; // already sorted desc -- first hit per rack is the latest
       map.set(log.rackId, {
+        id: log.id,
         cleanedAt: log.cleanedAt,
         cleanedBy: log.membership.user.fullName || log.membership.user.email,
         remarks: log.remarks,
+        qualityRating: log.qualityRating,
+        ratingRemarks: log.ratingRemarks,
+        ratedBy: log.ratedBy,
       });
     }
     return map;
