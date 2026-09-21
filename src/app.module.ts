@@ -29,6 +29,7 @@ import { ProductsModule } from './products/products.module';
 import { ShiftsModule } from './shifts/shifts.module';
 import { BillsModule } from './bills/bills.module';
 import { CountersModule } from './counters/counters.module';
+import { LocationsModule } from './locations/locations.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { CountersModule } from './counters/counters.module';
     ShiftsModule,
     BillsModule,
     CountersModule,
+    LocationsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

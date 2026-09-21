@@ -138,6 +138,7 @@ model Tenant {
   productReceivedLogs  ProductReceivedLog[]
   shifts               Shift[]
   shiftAssignments     ShiftAssignment[]
+  locations            Location[]
   bills                Bill[]
   counters             Counter[]
   counterSessions      CounterSession[]
@@ -667,10 +668,10 @@ model AttendanceEvent {
   membershipId String
   type         String // "check_in" | "check_out"
   occurredAt   DateTime @default(now())
-  source       String   @default("web") // web | admin_correction | qr_geofence
+  source       String   @default("web") // web | admin_correction | geofence
   reason       String? // required for admin_correction
   actorUserId  String? // who recorded it, if different from the membership's own user
-  latitude     Float? // scanning device's coordinates, qr_geofence only
+  latitude     Float? // the clocking-in device's own coordinates, geofence source only
   longitude    Float?
   createdAt    DateTime @default(now())
 
@@ -830,6 +831,27 @@ model ShiftAssignment {
   @@index([tenantId])
   @@index([membershipId, date])
   @@map("shift_assignments")
+}
+
+// A named work location (a store, a branch) an admin/supervisor registers
+// once -- replaces the earlier QR-kiosk design (a device posting a rotating
+// code someone had to leave running) with something that needs no dedicated
+// device at all: an employee's own phone checks its own location against
+// these on clock-in/out. See AttendanceService.clockBySelfLocation.
+model Location {
+  id            String   @id @default(uuid())
+  tenantId      String
+  name          String
+  lat           Float
+  lng           Float
+  radiusMeters  Int      @default(50)
+  createdAt     DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("locations")
 }
 
 // Phase 9 (Extensions): tenant-scoped keys for the read-only external API

@@ -29,11 +29,12 @@ export function canCreateEditDeleteAnyRecord(role: EffectiveRole): boolean {
   return role === 'SUPER_ADMIN';
 }
 
-// Whoever can post the attendance QR (Super Admin, or a supervisor for their
-// own team) -- distinct from canCheckInOut, which governs who can scan one.
-// A supervisor can hold both at once: they post it, and also scan it to
-// clock themselves in.
-export function canGenerateAttendanceQr(role: EffectiveRole): boolean {
+// Whoever can register/edit a work location for the geofenced self clock-in
+// (Super Admin, or a supervisor for their own team) -- distinct from
+// canCheckInOut, which governs who can clock in against one. A supervisor
+// can hold both at once: they register the location, and also clock
+// themselves in against it.
+export function canManageLocations(role: EffectiveRole): boolean {
   return role === 'SUPER_ADMIN' || role === 'SUPERVISOR';
 }
 
@@ -79,7 +80,7 @@ export function effectivePermissions(role: EffectiveRole, opts: { tenantAllowsAd
   return {
     role,
     canCheckInOut: canCheckInOut(role, opts.tenantAllowsAdminCheckIn),
-    canGenerateAttendanceQr: canGenerateAttendanceQr(role),
+    canManageLocations: canManageLocations(role),
     myTeamScope: myTeamScope(role),
     canCreateEditDeleteAnyRecord: canCreateEditDeleteAnyRecord(role),
     canCorrectAttendance: canCorrectAttendance(role, opts.hasAttendanceCorrectionGrant),

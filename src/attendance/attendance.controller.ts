@@ -4,8 +4,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { CorrectAttendanceDto } from './dto/correct-attendance.dto';
-import { GenerateAttendanceQrDto } from './dto/generate-attendance-qr.dto';
-import { ScanAttendanceQrDto } from './dto/scan-attendance-qr.dto';
+import { ClockByLocationDto } from './dto/clock-by-location.dto';
 
 @Controller('attendance')
 @UseGuards(JwtAuthGuard)
@@ -22,19 +21,11 @@ export class AttendanceController {
     return this.attendance.checkOut();
   }
 
-  // Only whoever can post the QR may mint one -- see canGenerateAttendanceQr.
-  @UseGuards(RolesGuard)
-  @Roles('SUPER_ADMIN', 'SUPERVISOR')
-  @Post('qr/generate')
-  generateQr(@Body() dto: GenerateAttendanceQrDto) {
-    return this.attendance.generateQr(dto);
-  }
-
   // Open to every role, like check-in/check-out -- the real boundary
   // (canCheckInOut) is enforced in the service.
-  @Post('qr/scan')
-  scanQr(@Body() dto: ScanAttendanceQrDto) {
-    return this.attendance.scanQr(dto);
+  @Post('clock-by-location')
+  clockBySelfLocation(@Body() dto: ClockByLocationDto) {
+    return this.attendance.clockBySelfLocation(dto);
   }
 
   @Get('today')

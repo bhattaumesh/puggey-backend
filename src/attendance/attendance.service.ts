@@ -8,12 +8,7 @@ import { haversineMeters } from '../common/geo.util';
 import { canCheckInOut, myTeamScope } from '../permissions/permissions';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CorrectAttendanceDto } from './dto/correct-attendance.dto';
-import { GenerateAttendanceQrDto } from './dto/generate-attendance-qr.dto';
-import { ScanAttendanceQrDto } from './dto/scan-attendance-qr.dto';
-import { AttendanceQrTokenService, ATTENDANCE_QR_TTL_SECONDS } from './attendance-qr-token.service';
-
-// How close a scanning device has to be to where the QR was generated.
-const GEOFENCE_RADIUS_METERS = 50;
+import { ClockByLocationDto } from './dto/clock-by-location.dto';
 
 // Nepal has one fixed offset year-round (no DST), so a business "day" for
 // attendance purposes is UTC+5:45. This is a grouping/presentation concern, not
@@ -57,7 +52,6 @@ export class AttendanceService {
     private readonly prisma: PrismaService,
     private readonly tenantPrisma: TenantPrismaService,
     private readonly ctx: TenantContextService,
-    private readonly qrToken: AttendanceQrTokenService,
   ) {}
 
   private async myMembershipId(tx: Prisma.TransactionClient): Promise<string> {
@@ -132,10 +126,10 @@ export class AttendanceService {
   }
 
   // Auto-detects direction from today's events, unlike checkIn/checkOut which
-  // are each an explicit request for one direction -- a QR scan is one
-  // action ("I'm here") that means check-in the first time today and
-  // check-out the second, same as the physical counter's DenominationStep
-  // toggle pattern elsewhere in the app.
+  // are each an explicit request for one direction -- tapping "clock in/out"
+  // by location is one action ("I'm here") that means check-in the first
+  // time today and check-out the second, same as the physical counter's
+  // DenominationStep toggle pattern elsewhere in the app.
   private async recordAutoClockEvent(tx: Prisma.TransactionClient, membershipId: string, source: string, lat?: number, lng?: number) {
     const todayKey = nepaliDateKey(new Date());
     const events = await tx.attendanceEvent.findMany({ where: { membershipId }, orderBy: { occurredAt: 'desc' }, take: 5 });
@@ -156,37 +150,45 @@ export class AttendanceService {
     });
   }
 
-  // Whoever is allowed to post the QR (see canGenerateAttendanceQr) does so
-  // from wherever they're physically standing -- that location, not any
-  // stored workplace address, becomes the geofence center for this rotation.
-  // No location config to maintain; the QR simply can't be generated from
-  // the wrong place.
-  generateQr(dto: GenerateAttendanceQrDto) {
-    return this.tenantPrisma.run(async (tx) => {
-      const membershipId = await this.myMembershipId(tx);
-      const token = this.qrToken.sign({ tenantId: this.ctx.tenantId!, generatedByMembershipId: membershipId, lat: dto.lat, lng: dto.lng });
-      return { token, expiresInSeconds: ATTENDANCE_QR_TTL_SECONDS };
-    });
-  }
-
-  scanQr(dto: ScanAttendanceQrDto) {
+  // No second device, no kiosk to leave running -- an employee's own phone
+  // checks its own location against whatever the tenant has registered
+  // (LocationsService) and clocks them in/out directly if it's within
+  // range. Trades the QR design's "someone else's device vouches for you"
+  // fraud resistance for something that needs zero setup per visit.
+  clockBySelfLocation(dto: ClockByLocationDto) {
     if (!canCheckInOut(this.ctx.role ?? 'EMPLOYEE')) {
       throw new ForbiddenException({ error: 'not_authorized', message: 'This role does not check in.' });
     }
-    const payload = this.qrToken.verify(dto.token);
-    if (payload.tenantId !== this.ctx.tenantId) {
-      throw new BadRequestException({ error: 'invalid_qr', message: 'This QR code is not for your company.' });
-    }
-    const distance = haversineMeters(payload.lat, payload.lng, dto.lat, dto.lng);
-    if (distance > GEOFENCE_RADIUS_METERS) {
-      throw new BadRequestException({
-        error: 'out_of_range',
-        message: `You're too far from where this QR was posted (about ${Math.round(distance)}m away; must be within ${GEOFENCE_RADIUS_METERS}m).`,
-      });
-    }
     return this.tenantPrisma.run(async (tx) => {
+      const locations = await tx.location.findMany();
+      if (locations.length === 0) {
+        throw new BadRequestException({ error: 'no_locations', message: 'No work locations have been set up yet. Ask an admin to add one.' });
+      }
+
+      let nearestName = locations[0].name;
+      let nearestDistance = Infinity;
+      let withinRange = false;
+      for (const loc of locations) {
+        const distance = haversineMeters(loc.lat, loc.lng, dto.lat, dto.lng);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestName = loc.name;
+        }
+        if (distance <= loc.radiusMeters) {
+          withinRange = true;
+          break;
+        }
+      }
+
+      if (!withinRange) {
+        throw new BadRequestException({
+          error: 'out_of_range',
+          message: `You're not close enough to a registered work location. Nearest is ${nearestName}, about ${Math.round(nearestDistance)}m away.`,
+        });
+      }
+
       const membershipId = await this.myMembershipId(tx);
-      return this.recordAutoClockEvent(tx, membershipId, 'qr_geofence', dto.lat, dto.lng);
+      return this.recordAutoClockEvent(tx, membershipId, 'geofence', dto.lat, dto.lng);
     });
   }
 
