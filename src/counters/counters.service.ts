@@ -9,6 +9,8 @@ import { AddCashMovementDto } from './dto/add-cash-movement.dto';
 import { VerifyCounterSessionDto } from './dto/verify-session.dto';
 import { EditClosingDetailsDto } from './dto/edit-closing-details.dto';
 import { EditOpeningDetailsDto } from './dto/edit-opening-details.dto';
+import { EditCashMovementDto } from './dto/edit-cash-movement.dto';
+import { EditSalesDetailsDto } from './dto/edit-sales-details.dto';
 import { renderCounterReportPdf } from './counter-report-pdf.util';
 
 type Tx = Prisma.TransactionClient;
@@ -279,6 +281,63 @@ export class CountersService {
         data: { openingCash, openingDenominations: dto.openingDenominations, previousSale: dto.previousSale },
         include: SESSION_INCLUDE,
       });
+    });
+  }
+
+  // Admin-only: fixes just the sale readings. The closing sale only exists
+  // once the till is closed, so it can't be set on an open session.
+  async editSalesDetails(sessionId: string, dto: EditSalesDetailsDto) {
+    return this.tenantPrisma.run(async (tx) => {
+      const session = await tx.counterSession.findUnique({ where: { id: sessionId } });
+      if (!session) throw new NotFoundException({ error: 'not_found', message: 'No such counter session.' });
+      if (session.verifiedAt) {
+        throw new BadRequestException({ error: 'already_verified', message: 'This session has already been verified and can no longer be edited.' });
+      }
+      if (dto.previousSale === undefined && dto.closingSale === undefined) {
+        throw new BadRequestException({ error: 'nothing_to_edit', message: 'Enter a previous sale or a closing sale to change.' });
+      }
+      if (dto.closingSale !== undefined && session.status !== 'closed') {
+        throw new BadRequestException({ error: 'session_open', message: 'The closing sale can only be edited once the counter is closed.' });
+      }
+
+      return tx.counterSession.update({
+        where: { id: sessionId },
+        data: { previousSale: dto.previousSale, closingSale: dto.closingSale },
+        include: SESSION_INCLUDE,
+      });
+    });
+  }
+
+  // Admin-only: corrects or removes a single inflow/outflow entry. Report
+  // totals (inflow, outflow, expected closing, variance) are recomputed from
+  // the movements on every read, so nothing else needs touching. Locked once
+  // verified, same as the opening/closing edits.
+  private async loadEditableMovement(tx: Tx, sessionId: string, movementId: string) {
+    const session = await tx.counterSession.findUnique({ where: { id: sessionId } });
+    if (!session) throw new NotFoundException({ error: 'not_found', message: 'No such counter session.' });
+    if (session.verifiedAt) {
+      throw new BadRequestException({ error: 'already_verified', message: 'This session has already been verified and can no longer be edited.' });
+    }
+    const movement = await tx.counterCashMovement.findUnique({ where: { id: movementId } });
+    if (!movement || movement.counterSessionId !== sessionId) {
+      throw new NotFoundException({ error: 'not_found', message: 'No such entry on this counter session.' });
+    }
+    return movement;
+  }
+
+  async editMovement(sessionId: string, movementId: string, dto: EditCashMovementDto) {
+    return this.tenantPrisma.run(async (tx) => {
+      await this.loadEditableMovement(tx, sessionId, movementId);
+      await tx.counterCashMovement.update({ where: { id: movementId }, data: { amount: dto.amount, reason: dto.reason } });
+      return tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: true } });
+    });
+  }
+
+  async deleteMovement(sessionId: string, movementId: string) {
+    return this.tenantPrisma.run(async (tx) => {
+      await this.loadEditableMovement(tx, sessionId, movementId);
+      await tx.counterCashMovement.delete({ where: { id: movementId } });
+      return tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: true } });
     });
   }
 

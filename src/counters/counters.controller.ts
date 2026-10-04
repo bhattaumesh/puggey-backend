@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { CountersService } from './counters.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -11,6 +11,8 @@ import { AddCashMovementDto } from './dto/add-cash-movement.dto';
 import { VerifyCounterSessionDto } from './dto/verify-session.dto';
 import { EditClosingDetailsDto } from './dto/edit-closing-details.dto';
 import { EditOpeningDetailsDto } from './dto/edit-opening-details.dto';
+import { EditCashMovementDto } from './dto/edit-cash-movement.dto';
+import { EditSalesDetailsDto } from './dto/edit-sales-details.dto';
 
 @Controller('counters')
 @UseGuards(JwtAuthGuard)
@@ -80,6 +82,29 @@ export class CountersController {
   @Patch('sessions/:id/opening-details')
   editOpeningDetails(@Param('id') id: string, @Body() dto: EditOpeningDetailsDto) {
     return this.counters.editOpeningDetails(id, dto);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN')
+  @Patch('sessions/:id/sales')
+  editSalesDetails(@Param('id') id: string, @Body() dto: EditSalesDetailsDto) {
+    return this.counters.editSalesDetails(id, dto);
+  }
+
+  // Admin-only, like editOpeningDetails: correcting or removing a single
+  // inflow/outflow entry rewrites part of the reconciliation's history.
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN')
+  @Patch('sessions/:id/movements/:movementId')
+  editMovement(@Param('id') id: string, @Param('movementId') movementId: string, @Body() dto: EditCashMovementDto) {
+    return this.counters.editMovement(id, movementId, dto);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN')
+  @Delete('sessions/:id/movements/:movementId')
+  deleteMovement(@Param('id') id: string, @Param('movementId') movementId: string) {
+    return this.counters.deleteMovement(id, movementId);
   }
 
   // Open to every role, like openSession -- the real boundary (anyone but
