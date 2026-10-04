@@ -1113,15 +1113,21 @@ model Bill {
 // A physical point-of-sale counter/till. Just a name -- same minimal shape
 // as Vendor/Shift, since nothing here asked for more.
 model Counter {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   tenantId  String
   name      String
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
+  // Soft delete: a counter that has handled cash keeps its closed sessions
+  // (and their reconciliation reports) forever, so "deleting" it only hides
+  // it from the lists and the assign dropdown. Name uniqueness is therefore
+  // enforced in CountersService against live counters only, not by a DB
+  // constraint -- otherwise a deleted counter's name could never be reused.
+  deletedAt DateTime?
 
   tenant   Tenant           @relation(fields: [tenantId], references: [id])
   sessions CounterSession[]
 
-  @@unique([tenantId, name])
+  @@index([tenantId, name])
   @@index([tenantId])
   @@map("counters")
 }

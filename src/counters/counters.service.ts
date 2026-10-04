@@ -11,6 +11,8 @@ import { EditClosingDetailsDto } from './dto/edit-closing-details.dto';
 import { EditOpeningDetailsDto } from './dto/edit-opening-details.dto';
 import { EditCashMovementDto } from './dto/edit-cash-movement.dto';
 import { EditSalesDetailsDto } from './dto/edit-sales-details.dto';
+import { UpdateCounterDto } from './dto/update-counter.dto';
+import { ReassignCounterStaffDto } from './dto/reassign-counter-staff.dto';
 import { renderCounterReportPdf } from './counter-report-pdf.util';
 
 type Tx = Prisma.TransactionClient;
@@ -113,21 +115,21 @@ export class CountersService {
 
   createCounter(dto: CreateCounterDto) {
     return this.tenantPrisma.run(async (tx) => {
-      const existing = await tx.counter.findFirst({ where: { name: dto.name } });
+      const existing = await tx.counter.findFirst({ where: { name: dto.name, deletedAt: null } });
       if (existing) throw new ConflictException({ error: 'counter_exists', message: 'A counter with that name already exists.' });
       return tx.counter.create({ data: { tenantId: this.ctx.tenantId!, name: dto.name } });
     });
   }
 
   listCounters() {
-    return this.tenantPrisma.run((tx) => tx.counter.findMany({ orderBy: { name: 'asc' } }));
+    return this.tenantPrisma.run((tx) => tx.counter.findMany({ where: { deletedAt: null }, orderBy: { name: 'asc' } }));
   }
 
   // "Who is assigned to the counter" -- every counter, paired with whoever
   // currently has it open (if anyone), for an at-a-glance overview.
   async overview() {
     return this.tenantPrisma.run(async (tx) => {
-      const counters = await tx.counter.findMany({ orderBy: { name: 'asc' } });
+      const counters = await tx.counter.findMany({ where: { deletedAt: null }, orderBy: { name: 'asc' } });
       const openSessions = await tx.counterSession.findMany({
         where: { status: 'open' },
         include: { membership: { select: { id: true, user: { select: { fullName: true, email: true } } } } },
@@ -137,13 +139,69 @@ export class CountersService {
     });
   }
 
+  private async loadLiveCounter(tx: Tx, counterId: string) {
+    const counter = await tx.counter.findUnique({ where: { id: counterId } });
+    if (!counter || counter.deletedAt) throw new NotFoundException({ error: 'not_found', message: 'No such counter.' });
+    return counter;
+  }
+
+  // Admin-only: renames a counter. Past sessions keep pointing at the same
+  // counter row, so old reports pick up the new name too.
+  async renameCounter(counterId: string, dto: UpdateCounterDto) {
+    return this.tenantPrisma.run(async (tx) => {
+      const counter = await this.loadLiveCounter(tx, counterId);
+      if (dto.name !== counter.name) {
+        const clash = await tx.counter.findFirst({ where: { name: dto.name, deletedAt: null, id: { not: counterId } } });
+        if (clash) throw new ConflictException({ error: 'counter_exists', message: 'A counter with that name already exists.' });
+      }
+      return tx.counter.update({ where: { id: counterId }, data: { name: dto.name } });
+    });
+  }
+
+  // Admin-only: hands an OPEN session to a different employee (the wrong
+  // person was assigned). Entries already logged keep whoever logged them;
+  // only who is responsible for the till going forward changes.
+  async reassignStaff(sessionId: string, dto: ReassignCounterStaffDto) {
+    return this.tenantPrisma.run(async (tx) => {
+      const session = await tx.counterSession.findUnique({ where: { id: sessionId } });
+      if (!session) throw new NotFoundException({ error: 'not_found', message: 'No such counter session.' });
+      if (session.status !== 'open') {
+        throw new BadRequestException({ error: 'session_closed', message: 'Only a counter that is currently open can be handed to someone else.' });
+      }
+      if (dto.membershipId === session.membershipId) return tx.counterSession.findUnique({ where: { id: sessionId }, include: SESSION_INCLUDE });
+      const member = await tx.tenantMembership.findUnique({ where: { id: dto.membershipId } });
+      if (!member) throw new NotFoundException({ error: 'not_found', message: 'No such employee.' });
+      const busy = await tx.counterSession.findFirst({ where: { membershipId: dto.membershipId, status: 'open' } });
+      if (busy) throw new ConflictException({ error: 'session_open', message: 'That employee already has an open counter session.' });
+
+      return tx.counterSession.update({ where: { id: sessionId }, data: { membershipId: dto.membershipId }, include: SESSION_INCLUDE });
+    });
+  }
+
+  // Admin-only. Past (closed) sessions and their reports are never touched --
+  // the counter is only hidden. If someone is on it right now, that open
+  // session goes with it (it has no finished report to preserve), along with
+  // the entries logged against it.
+  async deleteCounter(counterId: string) {
+    return this.tenantPrisma.run(async (tx) => {
+      await this.loadLiveCounter(tx, counterId);
+      const open = await tx.counterSession.findFirst({ where: { counterId, status: 'open' } });
+      if (open) {
+        await tx.counterCashMovement.deleteMany({ where: { counterSessionId: open.id } });
+        await tx.counterSession.delete({ where: { id: open.id } });
+      }
+      await tx.counter.update({ where: { id: counterId }, data: { deletedAt: new Date() } });
+      return { ok: true, removedOpenSession: open != null };
+    });
+  }
+
   async openSession(dto: OpenCounterSessionDto) {
     return this.tenantPrisma.run(async (tx) => {
       await this.assertCanAssign(tx, dto.membershipId);
       const existing = await tx.counterSession.findFirst({ where: { membershipId: dto.membershipId, status: 'open' } });
       if (existing) throw new ConflictException({ error: 'session_open', message: 'This employee already has an open counter session.' });
       const counter = await tx.counter.findUnique({ where: { id: dto.counterId } });
-      if (!counter) throw new NotFoundException({ error: 'not_found', message: 'No such counter.' });
+      if (!counter || counter.deletedAt) throw new NotFoundException({ error: 'not_found', message: 'No such counter.' });
       const member = await tx.tenantMembership.findUnique({ where: { id: dto.membershipId } });
       if (!member) throw new NotFoundException({ error: 'not_found', message: 'No such employee.' });
       const openingCash = this.validateDenominations(dto.openingDenominations);

@@ -13,6 +13,8 @@ import { EditClosingDetailsDto } from './dto/edit-closing-details.dto';
 import { EditOpeningDetailsDto } from './dto/edit-opening-details.dto';
 import { EditCashMovementDto } from './dto/edit-cash-movement.dto';
 import { EditSalesDetailsDto } from './dto/edit-sales-details.dto';
+import { UpdateCounterDto } from './dto/update-counter.dto';
+import { ReassignCounterStaffDto } from './dto/reassign-counter-staff.dto';
 
 @Controller('counters')
 @UseGuards(JwtAuthGuard)
@@ -29,6 +31,27 @@ export class CountersController {
   @Get()
   listCounters() {
     return this.counters.listCounters();
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN')
+  @Patch(':id')
+  renameCounter(@Param('id') id: string, @Body() dto: UpdateCounterDto) {
+    return this.counters.renameCounter(id, dto);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN')
+  @Delete(':id')
+  deleteCounter(@Param('id') id: string) {
+    return this.counters.deleteCounter(id);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN')
+  @Patch('sessions/:id/staff')
+  reassignStaff(@Param('id') id: string, @Body() dto: ReassignCounterStaffDto) {
+    return this.counters.reassignStaff(id, dto);
   }
 
   @Get('overview')
