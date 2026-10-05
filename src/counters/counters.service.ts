@@ -6,6 +6,7 @@ import { CreateCounterDto } from './dto/create-counter.dto';
 import { OpenCounterSessionDto } from './dto/open-session.dto';
 import { CloseCounterSessionDto } from './dto/close-session.dto';
 import { AddCashMovementDto } from './dto/add-cash-movement.dto';
+import { myTeamScope } from '../permissions/permissions';
 import { VerifyCounterSessionDto } from './dto/verify-session.dto';
 import { EditClosingDetailsDto } from './dto/edit-closing-details.dto';
 import { EditOpeningDetailsDto } from './dto/edit-opening-details.dto';
@@ -26,6 +27,23 @@ const SESSION_INCLUDE = {
   assignedBy: { select: { id: true, user: { select: { fullName: true, email: true } } } },
   verifiedBy: { select: { id: true, user: { select: { fullName: true, email: true } } } },
 } satisfies Prisma.CounterSessionInclude;
+
+// Every cash movement comes with the employee it concerns (advance / purchase
+// outflows), so the report and the entry list can show who it was for.
+const MOVEMENTS_INCLUDE = {
+  employee: { select: { id: true, user: { select: { fullName: true, email: true } } } },
+} satisfies Prisma.CounterCashMovementInclude;
+
+const PURPOSE_CATEGORY: Record<'advance' | 'employee_purchase', string> = {
+  advance: 'Advance salary',
+  employee_purchase: 'Purchase',
+};
+
+const PURPOSE_LABEL: Record<string, string> = {
+  advance: 'Advance payment',
+  employee_purchase: 'Employee purchase',
+  other: 'Other',
+};
 
 // Standard Nepali Rupee note/coin values -- the frontend uses this same list
 // to render the denomination entry grid, but the source of truth for what
@@ -225,7 +243,11 @@ export class CountersService {
       await this.loadLiveCounter(tx, counterId);
       const open = await tx.counterSession.findFirst({ where: { counterId, status: 'open' } });
       if (open) {
+        // Advances mirrored from this session's outflows go with it, unless
+        // payroll has already recovered some of one.
+        const mirrored = await tx.counterCashMovement.findMany({ where: { counterSessionId: open.id, advanceId: { not: null } }, select: { advanceId: true } });
         await tx.counterCashMovement.deleteMany({ where: { counterSessionId: open.id } });
+        await tx.advance.deleteMany({ where: { id: { in: mirrored.map((m) => m.advanceId!) }, recoveredAmount: 0 } });
         await tx.counterSession.delete({ where: { id: open.id } });
       }
       await tx.counter.update({ where: { id: counterId }, data: { deletedAt: new Date() } });
@@ -263,7 +285,7 @@ export class CountersService {
   async myActiveSession() {
     return this.tenantPrisma.run(async (tx) => {
       const myId = await this.myMembershipId(tx);
-      return tx.counterSession.findFirst({ where: { membershipId: myId, status: 'open' }, include: { ...SESSION_INCLUDE, movements: true } });
+      return tx.counterSession.findFirst({ where: { membershipId: myId, status: 'open' }, include: { ...SESSION_INCLUDE, movements: { include: MOVEMENTS_INCLUDE } } });
     });
   }
 
@@ -273,7 +295,7 @@ export class CountersService {
       return tx.counterSession.findMany({
         where: { membershipId },
         orderBy: { openedAt: 'desc' },
-        include: { ...SESSION_INCLUDE, movements: true },
+        include: { ...SESSION_INCLUDE, movements: { include: MOVEMENTS_INCLUDE } },
       });
     });
   }
@@ -293,25 +315,131 @@ export class CountersService {
     );
   }
 
+  // Finds (or revives / creates) the advance category an outflow purpose maps
+  // onto. Admins may rename or delete the default categories, so this looks
+  // the name up rather than assuming an id, and brings a deleted one back
+  // before creating a duplicate the unique name would reject.
+  private async advanceCategoryFor(tx: Tx, purpose: 'advance' | 'employee_purchase'): Promise<string> {
+    const name = PURPOSE_CATEGORY[purpose];
+    const tenantId = this.ctx.tenantId!;
+    const existing = await tx.advanceCategory.findFirst({ where: { tenantId, name: { equals: name, mode: 'insensitive' } } });
+    if (existing) {
+      if (existing.deletedAt) await tx.advanceCategory.update({ where: { id: existing.id }, data: { deletedAt: null } });
+      return existing.id;
+    }
+    return (await tx.advanceCategory.create({ data: { tenantId, name } })).id;
+  }
+
+  private movementReason(purpose: 'advance' | 'employee_purchase', employeeName: string, reason?: string): string {
+    return reason?.trim() || `${PURPOSE_LABEL[purpose]} - ${employeeName}`;
+  }
+
   async addMovement(sessionId: string, dto: AddCashMovementDto) {
     return this.tenantPrisma.run(async (tx) => {
-      const session = await tx.counterSession.findUnique({ where: { id: sessionId } });
+      const session = await tx.counterSession.findUnique({ where: { id: sessionId }, include: { counter: true } });
       if (!session) throw new NotFoundException({ error: 'not_found', message: 'No such counter session.' });
       if (session.status !== 'open') throw new BadRequestException({ error: 'session_closed', message: 'This counter session is already closed.' });
       await this.assertCanHandle(tx, session.membershipId);
       const membershipId = await this.myMembershipId(tx);
+      const tenantId = this.ctx.tenantId!;
 
-      await tx.counterCashMovement.create({
+      if (dto.purpose && dto.type !== 'outflow') {
+        throw new BadRequestException({ error: 'purpose_outflow_only', message: 'Only a cash outflow can have a purpose.' });
+      }
+
+      const linked = dto.purpose === 'advance' || dto.purpose === 'employee_purchase' ? dto.purpose : null;
+      if (!linked) {
+        if (!dto.reason?.trim()) throw new BadRequestException({ error: 'reason_required', message: 'A reason is required.' });
+        await tx.counterCashMovement.create({
+          data: { tenantId, counterSessionId: sessionId, type: dto.type, amount: dto.amount, reason: dto.reason.trim(), membershipId, purpose: dto.purpose ?? null },
+        });
+        return tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: { include: MOVEMENTS_INCLUDE } } });
+      }
+
+      // Advance / employee purchase: money that leaves the till for an
+      // employee and comes back out of their pay, so it is mirrored as an
+      // Advance that payroll already knows how to recover.
+      if (!dto.employeeMembershipId) {
+        throw new BadRequestException({ error: 'employee_required', message: 'Choose the employee this is for.' });
+      }
+      const employee = await tx.tenantMembership.findUnique({
+        where: { id: dto.employeeMembershipId },
+        include: { user: { select: { fullName: true, email: true } } },
+      });
+      if (!employee || employee.status !== 'active') {
+        throw new NotFoundException({ error: 'not_found', message: 'No such active employee.' });
+      }
+      if (employee.id === membershipId && this.ctx.role !== 'SUPER_ADMIN') {
+        throw new BadRequestException({
+          error: 'cannot_record_for_self',
+          message: 'You cannot record an advance or purchase for yourself. Ask your supervisor to enter it.',
+        });
+      }
+      const recoveryMode = linked === 'advance' ? (dto.recoveryMode ?? 'FULL') : 'FULL';
+      if (recoveryMode === 'INSTALMENT' && !dto.instalmentAmount) {
+        throw new BadRequestException({ error: 'instalment_amount_required', message: 'Set an instalment amount for instalment recovery.' });
+      }
+
+      const employeeName = employee.user.fullName || employee.user.email;
+      const reason = this.movementReason(linked, employeeName, dto.reason);
+      const advance = await tx.advance.create({
         data: {
-          tenantId: this.ctx.tenantId!,
-          counterSessionId: sessionId,
-          type: dto.type,
+          tenantId,
+          membershipId: employee.id,
+          categoryId: await this.advanceCategoryFor(tx, linked),
           amount: dto.amount,
-          reason: dto.reason,
-          membershipId,
+          dateGiven: new Date(),
+          reason: `Counter ${session.counter.name}: ${reason}`,
+          recoveryMode,
+          instalmentAmount: recoveryMode === 'INSTALMENT' ? dto.instalmentAmount : null,
+          createdByMembershipId: membershipId,
         },
       });
-      return tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: true } });
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          actorUserId: this.ctx.userId,
+          action: 'advance_created',
+          entityType: 'advance',
+          entityId: advance.id,
+          targetUserId: employee.userId,
+          afterJson: JSON.stringify({ amount: dto.amount, recoveryMode, source: 'counter_outflow', purpose: linked }),
+        },
+      });
+      await tx.counterCashMovement.create({
+        data: {
+          tenantId,
+          counterSessionId: sessionId,
+          type: 'outflow',
+          amount: dto.amount,
+          reason,
+          membershipId,
+          purpose: linked,
+          employeeMembershipId: employee.id,
+          advanceId: advance.id,
+        },
+      });
+      return tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: { include: MOVEMENTS_INCLUDE } } });
+    });
+  }
+
+  // The employees a cashier can pick for an advance or a purchase. Plain
+  // employees have no My Team access, so this is open only to people who
+  // handle a counter (or can see the team), and gives names only.
+  async staffDirectory() {
+    return this.tenantPrisma.run(async (tx) => {
+      const myId = await this.myMembershipId(tx);
+      const handling = myId ? await tx.counterSession.findFirst({ where: { membershipId: myId, status: 'open' }, select: { id: true } }) : null;
+      if (!handling && myTeamScope(this.ctx.role ?? 'EMPLOYEE') === 'none') {
+        throw new ForbiddenException({ error: 'not_authorized', message: 'You do not have access to the staff list.' });
+      }
+      const members = await tx.tenantMembership.findMany({
+        where: { status: 'active' },
+        select: { id: true, user: { select: { fullName: true, email: true } } },
+      });
+      return members
+        .map((m) => ({ id: m.id, name: m.user.fullName || m.user.email }))
+        .sort((a, b) => a.name.localeCompare(b.name));
     });
   }
 
@@ -421,19 +549,68 @@ export class CountersService {
     return movement;
   }
 
+  // The advance mirrored from an advance/purchase outflow can only follow
+  // the entry while payroll has not recovered anything against it yet --
+  // after that, the books have moved on and an edit or removal would silently
+  // break the employee's recovered/outstanding figures.
+  private async linkedAdvanceForChange(tx: Tx, advanceId: string | null) {
+    if (!advanceId) return null;
+    const advance = await tx.advance.findUnique({ where: { id: advanceId } });
+    if (!advance) return null;
+    if (Number(advance.recoveredAmount) > 0) {
+      throw new BadRequestException({
+        error: 'advance_partially_recovered',
+        message: 'Part of this has already been deducted from the employee\'s pay, so it can no longer be changed here.',
+      });
+    }
+    return advance;
+  }
+
   async editMovement(sessionId: string, movementId: string, dto: EditCashMovementDto) {
     return this.tenantPrisma.run(async (tx) => {
-      await this.loadEditableMovement(tx, sessionId, movementId);
+      const movement = await this.loadEditableMovement(tx, sessionId, movementId);
+      const advance = await this.linkedAdvanceForChange(tx, movement.advanceId);
       await tx.counterCashMovement.update({ where: { id: movementId }, data: { amount: dto.amount, reason: dto.reason } });
-      return tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: true } });
+      if (advance) {
+        const session = await tx.counterSession.findUnique({ where: { id: sessionId }, include: { counter: true } });
+        await tx.advance.update({
+          where: { id: advance.id },
+          data: { amount: dto.amount, reason: `Counter ${session?.counter.name ?? ''}: ${dto.reason}`.replace('Counter : ', 'Counter: ') },
+        });
+        await tx.auditLog.create({
+          data: {
+            tenantId: this.ctx.tenantId!,
+            actorUserId: this.ctx.userId,
+            action: 'advance_updated',
+            entityType: 'advance',
+            entityId: advance.id,
+            afterJson: JSON.stringify({ amount: dto.amount, source: 'counter_outflow_edit' }),
+          },
+        });
+      }
+      return tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: { include: MOVEMENTS_INCLUDE } } });
     });
   }
 
   async deleteMovement(sessionId: string, movementId: string) {
     return this.tenantPrisma.run(async (tx) => {
-      await this.loadEditableMovement(tx, sessionId, movementId);
+      const movement = await this.loadEditableMovement(tx, sessionId, movementId);
+      const advance = await this.linkedAdvanceForChange(tx, movement.advanceId);
       await tx.counterCashMovement.delete({ where: { id: movementId } });
-      return tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: true } });
+      if (advance) {
+        await tx.advance.delete({ where: { id: advance.id } });
+        await tx.auditLog.create({
+          data: {
+            tenantId: this.ctx.tenantId!,
+            actorUserId: this.ctx.userId,
+            action: 'advance_deleted',
+            entityType: 'advance',
+            entityId: advance.id,
+            afterJson: JSON.stringify({ amount: Number(advance.amount), source: 'counter_outflow_removed' }),
+          },
+        });
+      }
+      return tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: { include: MOVEMENTS_INCLUDE } } });
     });
   }
 
@@ -472,7 +649,7 @@ export class CountersService {
   // whoever's handling the till can sanity-check as they go.
   async report(sessionId: string) {
     return this.tenantPrisma.run(async (tx) => {
-      const session = await tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: true } });
+      const session = await tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: { include: MOVEMENTS_INCLUDE } } });
       if (!session) throw new NotFoundException({ error: 'not_found', message: 'No such counter session.' });
       await this.assertCanView(tx, session);
       return this.buildReport(session);
@@ -483,7 +660,7 @@ export class CountersService {
   // sales-counter readings taken at open and close (previousSale/closingSale).
   // Older sessions predating those two columns fall back to summing ad-hoc
   // "sales" cash movements, the previous way sales were tracked.
-  private buildReport(session: Prisma.CounterSessionGetPayload<{ include: typeof SESSION_INCLUDE & { movements: true } }>) {
+  private buildReport(session: Prisma.CounterSessionGetPayload<{ include: typeof SESSION_INCLUDE & { movements: { include: typeof MOVEMENTS_INCLUDE } } }>) {
     const totalInflow = session.movements.filter((m) => m.type === 'inflow').reduce((sum, m) => sum + Number(m.amount), 0);
     const totalOutflow = session.movements.filter((m) => m.type === 'outflow').reduce((sum, m) => sum + Number(m.amount), 0);
     const previousSale = session.previousSale != null ? Number(session.previousSale) : null;
@@ -515,7 +692,7 @@ export class CountersService {
 
   async getReportPdf(sessionId: string): Promise<Buffer> {
     const { report, tenant } = await this.tenantPrisma.run(async (tx) => {
-      const session = await tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: true } });
+      const session = await tx.counterSession.findUnique({ where: { id: sessionId }, include: { ...SESSION_INCLUDE, movements: { include: MOVEMENTS_INCLUDE } } });
       if (!session) throw new NotFoundException({ error: 'not_found', message: 'No such counter session.' });
       await this.assertCanView(tx, session);
       const tenantRow = await tx.tenant.findUnique({ where: { id: this.ctx.tenantId! } });
@@ -540,7 +717,7 @@ export class CountersService {
       totalSales: report.totalSales,
       expectedClosing: report.expectedClosing,
       variance: report.variance,
-      movements: report.session.movements.map((m) => ({ type: m.type, amount: Number(m.amount), reason: m.reason, createdAt: m.createdAt })),
+      movements: report.session.movements.map((m) => ({ type: m.type, amount: Number(m.amount), reason: m.purpose && PURPOSE_LABEL[m.purpose] && m.purpose !== 'other' ? `${PURPOSE_LABEL[m.purpose]}: ${m.reason}` : m.reason, createdAt: m.createdAt })),
       verificationStatus: report.verificationStatus,
       verifiedByName: report.session.verifiedBy ? report.session.verifiedBy.user.fullName || report.session.verifiedBy.user.email : null,
       verifiedAt: report.session.verifiedAt,

@@ -108,6 +108,13 @@ export class CountersController {
     return this.verifications.remove(id);
   }
 
+  // Names of the employees an outflow can be recorded against (advance /
+  // purchase). Open to anyone handling a counter or with team access.
+  @Get('staff')
+  staff() {
+    return this.counters.staffDirectory();
+  }
+
   @Get('overview')
   overview() {
     return this.counters.overview();

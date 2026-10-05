@@ -323,7 +323,8 @@ model TenantMembership {
   counterSessionsHandled   CounterSession[]  @relation("CounterHandler")
   counterSessionsAssigned  CounterSession[]  @relation("CounterAssigner")
   counterSessionsVerified  CounterSession[]  @relation("CounterVerifier")
-  counterCashMovements     CounterCashMovement[]
+  counterCashMovements     CounterCashMovement[] @relation("MovementHandler")
+  counterCashMovementsAbout CounterCashMovement[] @relation("MovementEmployee")
 
   @@unique([tenantId, userId])
   @@unique([tenantId, employeeCode])
@@ -1037,6 +1038,7 @@ model Advance {
   membership TenantMembership @relation(fields: [membershipId], references: [id])
   category   AdvanceCategory  @relation(fields: [categoryId], references: [id])
   recoveries AdvanceRecovery[]
+  counterMovement CounterCashMovement?
 
   @@index([tenantId])
   @@index([membershipId])
@@ -1228,11 +1230,21 @@ model CounterCashMovement {
   amount           Decimal          @db.Decimal(12, 2)
   reason           String
   membershipId     String
+  // What an outflow was for: 'advance' (money handed to an employee ahead of
+  // payroll), 'employee_purchase' (goods an employee took from the store) or
+  // 'other' (vendors, operating costs). The first two name the employee and
+  // are mirrored as an Advance (advanceId) so payroll recovers them from net
+  // pay; 'other' and every inflow leave these three null.
+  purpose          String?
+  employeeMembershipId String?
+  advanceId        String?          @unique
   createdAt        DateTime         @default(now())
 
   tenant         Tenant           @relation(fields: [tenantId], references: [id])
   counterSession CounterSession   @relation(fields: [counterSessionId], references: [id])
-  membership     TenantMembership @relation(fields: [membershipId], references: [id])
+  membership     TenantMembership @relation("MovementHandler", fields: [membershipId], references: [id])
+  employee       TenantMembership? @relation("MovementEmployee", fields: [employeeMembershipId], references: [id])
+  advance        Advance?         @relation(fields: [advanceId], references: [id], onDelete: SetNull)
 
   @@index([tenantId])
   @@index([counterSessionId])
