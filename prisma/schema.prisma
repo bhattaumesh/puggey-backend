@@ -139,6 +139,7 @@ model Tenant {
   shifts               Shift[]
   shiftAssignments     ShiftAssignment[]
   locations            Location[]
+  onlineVerifications  OnlineVerification[]
   bills                Bill[]
   counters             Counter[]
   counterSessions      CounterSession[]
@@ -1137,6 +1138,31 @@ model Counter {
   @@index([tenantId, name])
   @@index([tenantId])
   @@map("counters")
+}
+
+// A saved "Verify Online Transaction" result: the cashier's software amounts
+// lined up against the phone-pay amounts for one business day. The matching
+// is done in the browser; what is stored is the table as it was shown (rows)
+// plus the totals, so an old report always reads exactly as it did when saved.
+model OnlineVerification {
+  id                    String   @id @default(uuid())
+  tenantId              String
+  reportDate            DateTime @db.Date // the day the transactions belong to
+  note                  String?
+  ignoreOrder           Boolean  @default(false)
+  rows                  Json // [{ software: number | null, online: number | null }]
+  rowCount              Int
+  mismatchCount         Int
+  softwareTotal         Decimal  @db.Decimal(14, 2)
+  onlineTotal           Decimal  @db.Decimal(14, 2)
+  createdByMembershipId String?
+  createdByName         String?
+  createdAt             DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, reportDate])
+  @@map("online_verifications")
 }
 
 enum CounterSessionStatus {

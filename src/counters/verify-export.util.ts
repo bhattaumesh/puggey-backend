@@ -9,6 +9,20 @@ export interface VerifyRow {
 
 const cents = (n: number) => Math.round(n * 100);
 
+export interface VerifyMeta {
+  reportDate?: string; // YYYY-MM-DD
+  note?: string | null;
+  preparedBy?: string | null;
+}
+
+function metaLines(meta?: VerifyMeta): string[] {
+  const lines: string[] = [];
+  if (meta?.reportDate) lines.push(`Transactions of ${meta.reportDate}`);
+  if (meta?.note) lines.push(meta.note);
+  if (meta?.preparedBy) lines.push(`Verified by ${meta.preparedBy}`);
+  return lines;
+}
+
 export function summarise(rows: VerifyRow[]) {
   const results = rows.map((r) => ({ ...r, ok: r.software !== null && r.online !== null && cents(r.software) === cents(r.online) }));
   const softwareTotal = rows.reduce((t, r) => t + cents(r.software ?? 0), 0) / 100;
@@ -29,7 +43,7 @@ function fill(argb: string): ExcelJS.Fill {
   return { type: 'pattern', pattern: 'solid', fgColor: { argb } };
 }
 
-export async function verifyWorkbook(tenantName: string, rows: VerifyRow[]): Promise<ExcelJS.Buffer> {
+export async function verifyWorkbook(tenantName: string, rows: VerifyRow[], meta?: VerifyMeta): Promise<ExcelJS.Buffer> {
   const { results, softwareTotal, onlineTotal, totalsMatch, badCount } = summarise(rows);
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Verification');
@@ -41,6 +55,7 @@ export async function verifyWorkbook(tenantName: string, rows: VerifyRow[]): Pro
   ];
 
   sheet.addRow([`${tenantName} - Online transaction verification`]).font = { bold: true, size: 14 };
+  for (const line of metaLines(meta)) sheet.addRow([line]);
   sheet.addRow([`Generated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`]);
   sheet.addRow([badCount === 0 && totalsMatch ? 'Everything matches' : `${badCount} of ${rows.length} transactions do not match`]).font = { bold: true };
   sheet.addRow([]);
@@ -74,7 +89,7 @@ function money(n: number | null): string {
   return n === null ? 'Missing' : formatCurrency(n, { decimals: 2 });
 }
 
-export function verifyPdf(tenantName: string, rows: VerifyRow[]): Promise<Buffer> {
+export function verifyPdf(tenantName: string, rows: VerifyRow[], meta?: VerifyMeta): Promise<Buffer> {
   const { results, softwareTotal, onlineTotal, totalsMatch, badCount } = summarise(rows);
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
@@ -92,14 +107,19 @@ export function verifyPdf(tenantName: string, rows: VerifyRow[]): Promise<Buffer
 
     doc.fontSize(16).font('Helvetica-Bold').fillColor('#000000').text(tenantName, left, 50);
     doc.fontSize(13).text('Online transaction verification', left, 72);
-    doc.fontSize(9).font('Helvetica').fillColor('#666666').text(`Generated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`, left, 92);
+    const lines = [...metaLines(meta), `Generated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`];
+    let headY = 92;
+    for (const line of lines) {
+      doc.fontSize(9).font('Helvetica').fillColor('#666666').text(line, left, headY, { width: 495 });
+      headY += 13;
+    }
     doc
       .fontSize(11)
       .font('Helvetica-Bold')
       .fillColor(good ? '#1b5e20' : '#c62828')
-      .text(good ? 'Everything matches' : `${badCount} of ${rows.length} transactions do not match`, left, 112);
+      .text(good ? 'Everything matches' : `${badCount} of ${rows.length} transactions do not match`, left, headY + 8);
 
-    let y = 140;
+    let y = headY + 36;
     function cell(x: number, w: number, text: string, bg: string | null, fg: string, bold: boolean, align: 'left' | 'right') {
       if (bg) doc.rect(x, y, w, rowHeight).fill(bg);
       doc.fillColor(fg).font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).text(text, x + 6, y + 6, { width: w - 12, align, lineBreak: false });

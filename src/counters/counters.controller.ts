@@ -1,6 +1,8 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { CountersService } from './counters.service';
+import { VerificationsService } from './verifications.service';
+import { SaveVerificationDto } from './dto/save-verification.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -20,7 +22,10 @@ import { VerifyExportDto } from './dto/verify-export.dto';
 @Controller('counters')
 @UseGuards(JwtAuthGuard)
 export class CountersController {
-  constructor(private readonly counters: CountersService) {}
+  constructor(
+    private readonly counters: CountersService,
+    private readonly verifications: VerificationsService,
+  ) {}
 
   @UseGuards(RolesGuard)
   @Roles('SUPER_ADMIN')
@@ -69,6 +74,38 @@ export class CountersController {
     const { buffer, contentType, fileName } = await this.counters.getVerifyExportFile(id, format);
     res.set({ 'Content-Type': contentType, 'Content-Disposition': `attachment; filename="${fileName}"` });
     res.send(buffer);
+  }
+
+  // Saved Verify Online Transaction reports. Any role that can see the tab
+  // (Super Admin, Admin, supervisor) can save and read them; only Super Admin
+  // can delete one.
+  @Post('verifications')
+  saveVerification(@Body() dto: SaveVerificationDto) {
+    return this.verifications.save(dto);
+  }
+
+  @Get('verifications')
+  listVerifications(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.verifications.list(from, to);
+  }
+
+  @Get('verifications/:id')
+  getVerification(@Param('id') id: string) {
+    return this.verifications.get(id);
+  }
+
+  @Get('verifications/:id/:format')
+  async verificationFile(@Param('id') id: string, @Param('format') format: string, @Res() res: Response) {
+    const { buffer, contentType, fileName } = await this.verifications.file(id, format);
+    res.set({ 'Content-Type': contentType, 'Content-Disposition': `attachment; filename="${fileName}"` });
+    res.send(buffer);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN')
+  @Delete('verifications/:id')
+  deleteVerification(@Param('id') id: string) {
+    return this.verifications.remove(id);
   }
 
   @Get('overview')
