@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import * as bcrypt from 'bcryptjs';
 import sharp from 'sharp';
 import { Prisma, MembershipStatus } from '@prisma/client';
+import { DeactivateEmployeeDto } from './dto/deactivate-employee.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { TenantPrismaService } from '../prisma/tenant-prisma.service';
 import { TenantContextService } from '../common/tenant-context.service';
@@ -487,29 +488,141 @@ export class EmployeesService {
     return this.withComputedPhotoUrl(updated);
   }
 
-  // Soft-delete: sets status to disabled and stamps leftAt, never a hard
-  // DELETE. Attendance, leave, payslip, and advance history all reference
-  // this membership by id, and off-boarded staff still need their past
-  // records intact (payroll history, audit trail) -- disabled memberships
-  // simply stop appearing in list() (already filtered to status: active)
-  // and lose their ability to sign in going forward.
-  async remove(id: string) {
+  // Leaving the organisation: sets status to disabled and records when, why,
+  // and who recorded it -- never a hard DELETE. Attendance, leave, payslip,
+  // and advance history all reference this membership by id, and off-boarded
+  // staff still need their past records intact (payroll history, audit
+  // trail). Disabled memberships stop appearing in list(), move to
+  // listFormer() (the "Old employees" view), and lose the ability to sign in.
+  //
+  // Super Admin can deactivate anyone but themselves; a supervisor only the
+  // people in their own reporting tree. Whoever reported to the leaver is
+  // handed up to the leaver's own supervisor so nobody is left without one.
+  async deactivate(id: string, dto: DeactivateEmployeeDto) {
+    const role = this.ctx.role ?? 'EMPLOYEE';
+    if (role !== 'SUPER_ADMIN' && role !== 'SUPERVISOR') {
+      throw new ForbiddenException({ error: 'not_authorized', message: 'You cannot deactivate employees.' });
+    }
+
     const removed = await this.tenantPrisma.run(async (tx) => {
       const existing = await tx.tenantMembership.findUnique({ where: { id } });
       if (!existing) throw new NotFoundException({ error: 'not_found', message: 'No such employee.' });
 
       const myId = await this.myMembershipId(tx);
       if (myId === id) {
-        throw new BadRequestException({ error: 'cannot_remove_self', message: 'You cannot remove your own account.' });
+        throw new BadRequestException({ error: 'cannot_remove_self', message: 'You cannot deactivate your own account.' });
       }
+      if (existing.status === MembershipStatus.disabled) {
+        throw new BadRequestException({ error: 'already_deactivated', message: 'This employee is already deactivated.' });
+      }
+
+      if (role === 'SUPERVISOR') {
+        const subtreeIds = myId ? await this.getReportSubtreeIds(tx, myId) : [];
+        if (!subtreeIds.includes(id) || (existing.role !== 'EMPLOYEE' && existing.role !== 'SUPERVISOR')) {
+          throw new ForbiddenException({ error: 'not_authorized', message: 'You can only deactivate people who report to you.' });
+        }
+      }
+
+      if (existing.role === 'SUPER_ADMIN') {
+        const otherAdmins = await tx.tenantMembership.count({
+          where: { tenantId: existing.tenantId, role: 'SUPER_ADMIN', status: MembershipStatus.active, id: { not: id } },
+        });
+        if (otherAdmins === 0) {
+          throw new BadRequestException({ error: 'last_admin', message: 'This is the only Super Admin, so they cannot be deactivated.' });
+        }
+      }
+
+      const lastWorkingDay = new Date(`${dto.lastWorkingDay}T00:00:00.000Z`);
+      if (Number.isNaN(lastWorkingDay.getTime()) || lastWorkingDay.toISOString().slice(0, 10) !== dto.lastWorkingDay) {
+        throw new BadRequestException({ error: 'invalid_date', message: 'Enter a valid last working day.' });
+      }
+      if (lastWorkingDay.getTime() < new Date(existing.joinedAt.toISOString().slice(0, 10)).getTime()) {
+        throw new BadRequestException({ error: 'invalid_date', message: 'The last working day cannot be before the joining date.' });
+      }
+
+      const me = myId
+        ? await tx.tenantMembership.findUnique({ where: { id: myId }, include: { user: { select: { fullName: true, email: true } } } })
+        : null;
+
+      await tx.tenantMembership.updateMany({
+        where: { supervisorMembershipId: id, status: { not: MembershipStatus.disabled } },
+        data: { supervisorMembershipId: existing.supervisorMembershipId },
+      });
 
       return tx.tenantMembership.update({
         where: { id },
-        data: { status: MembershipStatus.disabled, leftAt: new Date() },
+        data: {
+          status: MembershipStatus.disabled,
+          leftAt: new Date(),
+          lastWorkingDay,
+          exitType: dto.exitType,
+          exitRemarks: dto.remarks,
+          exitRecordedByName: me ? me.user.fullName || me.user.email : null,
+        },
         include: EMPLOYEE_INCLUDE,
       });
     });
     return this.withComputedPhotoUrl(removed);
+  }
+
+  // The "Old employees" roster: everyone who has been deactivated, most
+  // recent leaver first. Same visibility as list() -- Super Admin and Admin see
+  // the whole organisation, a supervisor only their own reporting tree.
+  async listFormer() {
+    const scope = myTeamScope(this.ctx.role ?? 'EMPLOYEE');
+    if (scope === 'none') {
+      throw new ForbiddenException({ error: 'not_authorized', message: 'You do not have access to the team list.' });
+    }
+    const canSeeSensitive = this.ctx.role === 'SUPER_ADMIN';
+
+    const former = await this.tenantPrisma.run(async (tx) => {
+      const orderBy = [{ leftAt: 'desc' as const }];
+      if (scope === 'all') {
+        return tx.tenantMembership.findMany({ where: { status: MembershipStatus.disabled }, include: EMPLOYEE_INCLUDE, orderBy });
+      }
+      const myId = await this.myMembershipId(tx);
+      if (!myId) return [];
+      const subtreeIds = await this.getReportSubtreeIds(tx, myId);
+      return tx.tenantMembership.findMany({
+        where: { id: { in: subtreeIds }, status: MembershipStatus.disabled },
+        include: EMPLOYEE_INCLUDE,
+        orderBy,
+      });
+    });
+    const withPhotos = former.map((e) => this.withComputedPhotoUrl(e));
+    return canSeeSensitive ? withPhotos : withPhotos.map((e) => this.redact(e));
+  }
+
+  // Taking someone back (rejoined, or deactivated by mistake). Counts against
+  // the plan's employee limit like a new hire, and clears the exit record --
+  // it describes a departure that is no longer true.
+  async reactivate(id: string) {
+    const restored = await this.tenantPrisma.run(async (tx) => {
+      const existing = await tx.tenantMembership.findUnique({ where: { id } });
+      if (!existing) throw new NotFoundException({ error: 'not_found', message: 'No such employee.' });
+      if (existing.status !== MembershipStatus.disabled) {
+        throw new BadRequestException({ error: 'not_deactivated', message: 'This employee is already active.' });
+      }
+
+      const tenant = await tx.tenant.findUnique({ where: { id: existing.tenantId } });
+      const limit = await planLimit(tx, tenant?.plan ?? 'trial');
+      if (limit !== null) {
+        const activeCount = await tx.tenantMembership.count({ where: { tenantId: existing.tenantId, status: MembershipStatus.active } });
+        if (activeCount >= limit) {
+          throw new BadRequestException({
+            error: 'plan_limit_reached',
+            message: `The ${await planLabel(tx, tenant?.plan ?? 'trial')} plan allows up to ${limit} employees. Ask your Puggey contact about upgrading.`,
+          });
+        }
+      }
+
+      return tx.tenantMembership.update({
+        where: { id },
+        data: { status: MembershipStatus.active, leftAt: null, lastWorkingDay: null, exitType: null, exitRemarks: null, exitRecordedByName: null },
+        include: EMPLOYEE_INCLUDE,
+      });
+    });
+    return this.withComputedPhotoUrl(restored);
   }
 
   // Creating an employee means creating a brand-new `users` row when the email

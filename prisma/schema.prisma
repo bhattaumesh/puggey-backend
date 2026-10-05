@@ -284,6 +284,13 @@ model TenantMembership {
 
   joinedAt     DateTime          @default(now())
   leftAt       DateTime?
+  // Recorded when an employee is deactivated (leaves the organisation). leftAt
+  // above is the moment the account was switched off; lastWorkingDay is the
+  // calendar day the person actually worked until, which can differ.
+  lastWorkingDay    DateTime? @db.Date
+  exitType          String? // resigned | terminated | contract_ended | retired | other
+  exitRemarks       String?
+  exitRecordedByName String? // name snapshot of whoever deactivated them
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
 

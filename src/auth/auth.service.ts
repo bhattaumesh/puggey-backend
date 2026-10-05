@@ -254,6 +254,10 @@ export class AuthService {
     const membership = existing.tenantId ? existing.user.memberships.find((m) => m.tenantId === existing.tenantId) : undefined;
     if (membership) {
       assertTenantActive(membership.tenant.status);
+      // Deactivated since they last signed in: no new access token.
+      if (membership.status !== MembershipStatus.active) {
+        throw new UnauthorizedException({ error: 'account_deactivated', message: 'This account has been deactivated.' });
+      }
     }
 
     await runInTenantContext(this.prisma, { isPugeyStaff: true }, (tx) =>

@@ -7,6 +7,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { DeactivateEmployeeDto } from './dto/deactivate-employee.dto';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 
@@ -33,6 +34,12 @@ export class EmployeesController {
   @Get('employees')
   list() {
     return this.employees.list();
+  }
+
+  // Declared before ':id' for the same reason as 'me' and 'recent-work'.
+  @Get('employees/former')
+  listFormer() {
+    return this.employees.listFormer();
   }
 
   @Get('employees/:id')
@@ -64,11 +71,18 @@ export class EmployeesController {
     return this.employees.update(id, dto);
   }
 
+  // Open to Super Admin and supervisors; the service checks that a supervisor
+  // is only deactivating someone who reports to them.
+  @Post('employees/:id/deactivate')
+  deactivate(@Param('id') id: string, @Body() dto: DeactivateEmployeeDto) {
+    return this.employees.deactivate(id, dto);
+  }
+
   @UseGuards(RolesGuard)
   @Roles('SUPER_ADMIN')
-  @Delete('employees/:id')
-  remove(@Param('id') id: string) {
-    return this.employees.remove(id);
+  @Post('employees/:id/reactivate')
+  reactivate(@Param('id') id: string) {
+    return this.employees.reactivate(id);
   }
 
   @UseGuards(RolesGuard)

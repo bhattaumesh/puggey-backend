@@ -38,6 +38,12 @@ export function canManageLocations(role: EffectiveRole): boolean {
   return role === 'SUPER_ADMIN' || role === 'SUPERVISOR';
 }
 
+// Switching an employee off when they leave: Super Admin for anyone, a
+// supervisor for the people who report to them (checked server-side).
+export function canDeactivateEmployees(role: EffectiveRole): boolean {
+  return role === 'SUPER_ADMIN' || role === 'SUPERVISOR';
+}
+
 export function canCorrectAttendance(role: EffectiveRole, grantedForOwnTeam = false): boolean {
   if (role === 'SUPER_ADMIN') return true;
   if (role === 'SUPERVISOR') return grantedForOwnTeam;
@@ -83,6 +89,7 @@ export function effectivePermissions(role: EffectiveRole, opts: { tenantAllowsAd
     canManageLocations: canManageLocations(role),
     myTeamScope: myTeamScope(role),
     canCreateEditDeleteAnyRecord: canCreateEditDeleteAnyRecord(role),
+    canDeactivateEmployees: canDeactivateEmployees(role),
     canCorrectAttendance: canCorrectAttendance(role, opts.hasAttendanceCorrectionGrant),
     canAssignRolesAndPermissions: canAssignRolesAndPermissions(role),
     canApproveLeave: canApproveLeave(role, opts.isDelegatedLeaveApprover),
