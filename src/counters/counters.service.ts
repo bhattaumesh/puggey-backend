@@ -14,6 +14,9 @@ import { EditSalesDetailsDto } from './dto/edit-sales-details.dto';
 import { UpdateCounterDto } from './dto/update-counter.dto';
 import { ReassignCounterStaffDto } from './dto/reassign-counter-staff.dto';
 import { renderCounterReportPdf } from './counter-report-pdf.util';
+import { VerifyExportDto } from './dto/verify-export.dto';
+import { verifyPdf, verifyWorkbook, type VerifyRow } from './verify-export.util';
+import { randomUUID } from 'node:crypto';
 
 type Tx = Prisma.TransactionClient;
 
@@ -29,12 +32,47 @@ const SESSION_INCLUDE = {
 // counts as a valid key lives here since this is what actually gets trusted.
 export const NPR_DENOMINATIONS = [1000, 500, 100, 50, 20, 10, 5, 2, 1];
 
+// "Verify Online Transaction" tables waiting to be fetched as a file. Held in
+// memory only (nothing is stored in the database) and dropped after a few
+// minutes; a restart in between just means asking for the file again. Module
+// level because the service itself is created per request.
+const verifyExports = new Map<string, { tenantId: string; rows: VerifyRow[]; expires: number }>();
+
 @Injectable()
 export class CountersService {
   constructor(
     private readonly tenantPrisma: TenantPrismaService,
     private readonly ctx: TenantContextService,
   ) {}
+
+  createVerifyExport(dto: VerifyExportDto): { id: string } {
+    const now = Date.now();
+    for (const [key, entry] of verifyExports) if (entry.expires < now) verifyExports.delete(key);
+    const id = randomUUID();
+    const rows = dto.rows.map((r) => ({ software: r.software ?? null, online: r.online ?? null }));
+    verifyExports.set(id, { tenantId: this.ctx.tenantId!, rows, expires: now + 5 * 60_000 });
+    return { id };
+  }
+
+  async getVerifyExportFile(id: string, format: string): Promise<{ buffer: Buffer; contentType: string; fileName: string }> {
+    const entry = verifyExports.get(id);
+    if (!entry || entry.expires < Date.now() || entry.tenantId !== this.ctx.tenantId) {
+      throw new NotFoundException({ error: 'not_found', message: 'This file has expired. Go back and download it again.' });
+    }
+    if (format !== 'xlsx' && format !== 'pdf') throw new BadRequestException({ error: 'bad_format', message: 'Choose xlsx or pdf.' });
+    const tenant = await this.tenantPrisma.run((tx) => tx.tenant.findUnique({ where: { id: entry.tenantId } }));
+    const name = tenant?.name ?? 'Puggey';
+    const day = new Date().toISOString().slice(0, 10);
+    if (format === 'pdf') {
+      return { buffer: await verifyPdf(name, entry.rows), contentType: 'application/pdf', fileName: `online-verification-${day}.pdf` };
+    }
+    const buffer = Buffer.from(await verifyWorkbook(name, entry.rows));
+    return {
+      buffer,
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      fileName: `online-verification-${day}.xlsx`,
+    };
+  }
 
   private async myMembershipId(tx: Tx): Promise<string> {
     const userId = this.ctx.userId;

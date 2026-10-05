@@ -15,6 +15,7 @@ import { EditCashMovementDto } from './dto/edit-cash-movement.dto';
 import { EditSalesDetailsDto } from './dto/edit-sales-details.dto';
 import { UpdateCounterDto } from './dto/update-counter.dto';
 import { ReassignCounterStaffDto } from './dto/reassign-counter-staff.dto';
+import { VerifyExportDto } from './dto/verify-export.dto';
 
 @Controller('counters')
 @UseGuards(JwtAuthGuard)
@@ -52,6 +53,22 @@ export class CountersController {
   @Patch('sessions/:id/staff')
   reassignStaff(@Param('id') id: string, @Body() dto: ReassignCounterStaffDto) {
     return this.counters.reassignStaff(id, dto);
+  }
+
+  // The "Verify Online Transaction" tab matches in the browser; these two
+  // routes only turn its finished table into an Excel/PDF file. The table is
+  // parked for a few minutes so the file can be fetched with a plain GET link
+  // (what the app's WebView needs), see openOrDownload in the web client.
+  @Post('verify-export')
+  createVerifyExport(@Body() dto: VerifyExportDto) {
+    return this.counters.createVerifyExport(dto);
+  }
+
+  @Get('verify-export/:id/:format')
+  async verifyExportFile(@Param('id') id: string, @Param('format') format: string, @Res() res: Response) {
+    const { buffer, contentType, fileName } = await this.counters.getVerifyExportFile(id, format);
+    res.set({ 'Content-Type': contentType, 'Content-Disposition': `attachment; filename="${fileName}"` });
+    res.send(buffer);
   }
 
   @Get('overview')
