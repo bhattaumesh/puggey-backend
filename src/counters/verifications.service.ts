@@ -41,9 +41,10 @@ function summary(v: StoredVerification) {
 }
 
 // Saved "Verify Online Transaction" reports, so yesterday's (or last month's)
-// check can be opened again later. Super Admin, Admin and supervisors can all
-// save and read them -- anyone who can see the verification tab -- and only
-// Super Admin can delete one.
+// check can be opened again later. Every signed-in employee can verify and
+// save their own -- cashiers do this for their own till -- and sees only the
+// reports they saved themselves. Super Admin, Admin and supervisors see
+// everyone's. Only Super Admin can delete one.
 @Injectable()
 export class VerificationsService {
   constructor(
@@ -52,9 +53,21 @@ export class VerificationsService {
   ) {}
 
   private assertCanUse() {
-    if (myTeamScope(this.ctx.role ?? 'EMPLOYEE') === 'none') {
+    if (!this.ctx.tenantId || !this.ctx.role) {
       throw new ForbiddenException({ error: 'not_authorized', message: 'You do not have access to verified transactions.' });
     }
+  }
+
+  private seesEveryonesReports(): boolean {
+    return myTeamScope(this.ctx.role ?? 'EMPLOYEE') !== 'none';
+  }
+
+  private async myMembershipId(tx: Prisma.TransactionClient): Promise<string | null> {
+    const userId = this.ctx.userId;
+    const tenantId = this.ctx.tenantId;
+    if (!userId || !tenantId) return null;
+    const m = await tx.tenantMembership.findUnique({ where: { tenantId_userId: { tenantId, userId } }, select: { id: true } });
+    return m?.id ?? null;
   }
 
   private parseDate(value: string): Date {
@@ -101,18 +114,26 @@ export class VerificationsService {
     const range: { gte?: Date; lte?: Date } = {};
     if (from) range.gte = this.parseDate(from);
     if (to) range.lte = this.parseDate(to);
-    const found = await this.tenantPrisma.run((tx) =>
-      tx.onlineVerification.findMany({
-        where: from || to ? { reportDate: range } : {},
+    const found = await this.tenantPrisma.run(async (tx) => {
+      const mine = this.seesEveryonesReports() ? null : await this.myMembershipId(tx);
+      return tx.onlineVerification.findMany({
+        where: {
+          ...(from || to ? { reportDate: range } : {}),
+          ...(this.seesEveryonesReports() ? {} : { createdByMembershipId: mine ?? '-' }),
+        },
         orderBy: [{ reportDate: 'desc' }, { createdAt: 'desc' }],
         take: MAX_LISTED,
-      }),
-    );
+      });
+    });
     return found.map(summary);
   }
 
   private async load(id: string) {
-    const found = await this.tenantPrisma.run((tx) => tx.onlineVerification.findUnique({ where: { id } }));
+    const found = await this.tenantPrisma.run(async (tx) => {
+      const row = await tx.onlineVerification.findUnique({ where: { id } });
+      if (row && !this.seesEveryonesReports() && row.createdByMembershipId !== (await this.myMembershipId(tx))) return null;
+      return row;
+    });
     if (!found) throw new NotFoundException({ error: 'not_found', message: 'No such saved verification.' });
     return found;
   }

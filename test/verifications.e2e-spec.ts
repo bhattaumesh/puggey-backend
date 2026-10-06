@@ -80,10 +80,16 @@ describe('Saved online verifications (e2e)', () => {
   });
 
   let savedId: string;
+  let employeeReportId: string;
 
-  it('a plain employee cannot save or read verifications', async () => {
-    expect((await save(employeeToken)).status).toBe(403);
-    expect((await request(app.getHttpServer()).get('/counters/verifications').set(auth(employeeToken))).status).toBe(403);
+  it('a plain employee can verify and save, but only ever sees their own reports', async () => {
+    const mine = await save(employeeToken, { reportDate: '2026-10-03', note: 'My till' });
+    expect(mine.status).toBe(201);
+    expect(mine.body.createdByName).toBe('employee');
+    const list = await request(app.getHttpServer()).get('/counters/verifications').set(auth(employeeToken));
+    expect(list.body.map((v: { id: string }) => v.id)).toEqual([mine.body.id]);
+    expect((await request(app.getHttpServer()).get(`/counters/verifications/${mine.body.id}`).set(auth(employeeToken))).status).toBe(200);
+    employeeReportId = mine.body.id;
   });
 
   it('validates the date and the rows', async () => {
@@ -104,15 +110,21 @@ describe('Saved online verifications (e2e)', () => {
     savedId = res.body.id;
   });
 
+  it("an employee cannot open or download someone else's report", async () => {
+    expect((await request(app.getHttpServer()).get(`/counters/verifications/${savedId}`).set(auth(employeeToken))).status).toBe(404);
+    const list = await request(app.getHttpServer()).get('/counters/verifications').set(auth(employeeToken));
+    expect(list.body.map((v: { id: string }) => v.id)).toEqual([employeeReportId]);
+  });
+
   it('the admin can list and reopen what the supervisor saved, on a later day', async () => {
     await save(adminToken, { reportDate: '2026-10-01', note: undefined, rows: [{ software: 100, online: 100 }] });
 
     const all = await request(app.getHttpServer()).get('/counters/verifications').set(auth(adminToken));
     expect(all.status).toBe(200);
-    expect(all.body.map((v: { reportDate: string }) => v.reportDate.slice(0, 10))).toEqual(['2026-10-04', '2026-10-01']); // newest day first
+    expect(all.body.map((v: { reportDate: string }) => v.reportDate.slice(0, 10))).toEqual(['2026-10-04', '2026-10-03', '2026-10-01']); // newest day first
     expect(all.body[0].rows).toBeUndefined(); // list stays light
 
-    const ranged = await request(app.getHttpServer()).get('/counters/verifications?from=2026-10-03&to=2026-10-05').set(auth(supervisorToken));
+    const ranged = await request(app.getHttpServer()).get('/counters/verifications?from=2026-10-04&to=2026-10-05').set(auth(supervisorToken));
     expect(ranged.body).toHaveLength(1);
 
     const one = await request(app.getHttpServer()).get(`/counters/verifications/${savedId}`).set(auth(adminToken));
